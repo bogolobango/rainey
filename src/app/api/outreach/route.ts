@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, getDb } from "@/lib/db";
 import { outreachMessages, leads } from "@/lib/db/schema";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
   try {

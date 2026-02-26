@@ -8,12 +8,6 @@
  * without human approval. Agents draft, prepare, and queue.
  */
 
-import { runLeadScout } from "./lead-scout";
-import { generateOutreachBatch } from "./outreach-composer";
-import { generateMorningBriefing, generateEveningReport, detectStaleProspects } from "./pipeline-intelligence";
-import { generateCallPrep } from "./prospect-research";
-import { buildDailyFollowUpQueue } from "./follow-up-sequencing";
-import { generateProposal } from "./proposal-generator";
 import type { AgentType } from "@/types";
 export { DAILY_SCHEDULE, type ScheduledTask } from "./schedule";
 

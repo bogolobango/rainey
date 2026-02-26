@@ -30,7 +30,7 @@ export interface InstantlyLead {
 // - GET /api/v1/campaign/get — Get campaign analytics
 // - POST /api/v1/campaign/pause — Pause/resume sequence
 
-export async function createCampaign(name: string): Promise<string | null> {
+export async function createCampaign(_name: string): Promise<string | null> {
   const apiKey = process.env.INSTANTLY_API_KEY;
   if (!apiKey) {
     console.warn("[Instantly] API key not configured");
@@ -41,8 +41,8 @@ export async function createCampaign(name: string): Promise<string | null> {
 }
 
 export async function addLeadToCampaign(
-  campaignId: string,
-  lead: InstantlyLead
+  _campaignId: string,
+  _lead: InstantlyLead
 ): Promise<boolean> {
   const apiKey = process.env.INSTANTLY_API_KEY;
   if (!apiKey) return false;
@@ -50,7 +50,7 @@ export async function addLeadToCampaign(
   return false;
 }
 
-export async function getCampaignAnalytics(campaignId: string): Promise<InstantlyCampaign | null> {
+export async function getCampaignAnalytics(_campaignId: string): Promise<InstantlyCampaign | null> {
   const apiKey = process.env.INSTANTLY_API_KEY;
   if (!apiKey) return null;
   // TODO: Implement

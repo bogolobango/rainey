@@ -93,7 +93,7 @@ export function handleSignal(signal: SignalType): SignalAction {
 // ─── Sequence Manager ────────────────────────────────────────────────────────
 export function getNextTouchpoint(
   currentDay: number,
-  _channelsUsed: Channel[]
+  _channelsUsed: Channel[] // reserved for future channel rotation logic
 ): TouchPoint | null {
   // Find the next touchpoint after the current day
   const upcoming = SEQUENCE_TOUCHPOINTS.filter(tp => tp.day > currentDay);

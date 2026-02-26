@@ -1,4 +1,4 @@
-import { db, getDb } from "@/lib/db";
+import { db } from "@/lib/db";
 import { leads, pipelineEvents, outreachMessages, followUpSequences } from "@/lib/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -141,7 +141,7 @@ export async function updateMessageEngagement(
 // ─── Follow-Up Sequence Control ──────────────────────────────────────────────
 
 /** Pause follow-up sequences for a lead (e.g. after a reply or booked call). */
-export async function pauseFollowUpSequences(leadId: number, reason: string) {
+export async function pauseFollowUpSequences(leadId: number, _reason: string) {
   await db
     .update(followUpSequences)
     .set({
