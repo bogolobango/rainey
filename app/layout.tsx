@@ -13,9 +13,10 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  console.log("[v0] RootLayout rendering");
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="antialiased font-sans">
+      <body className="antialiased font-sans bg-background text-foreground">
         <TooltipProvider delayDuration={0}>
           {children}
         </TooltipProvider>
