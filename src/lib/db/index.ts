@@ -156,7 +156,26 @@ function getDatabase() {
     CREATE INDEX IF NOT EXISTS idx_follow_up_lead_id ON follow_up_sequences(lead_id);
   `);
 
+  // Auto-seed if empty
+  const count = _sqlite.prepare("SELECT count(*) as c FROM leads").get() as { c: number };
+  if (count.c === 0) {
+    _needsSeed = true;
+  }
+
   return _db;
+}
+
+let _needsSeed = false;
+let _seedStarted = false;
+
+/** Returns true if the database was just created and needs seeding. */
+export function checkAndClearSeedFlag(): boolean {
+  if (_needsSeed && !_seedStarted) {
+    _seedStarted = true;
+    _needsSeed = false;
+    return true;
+  }
+  return false;
 }
 
 // Export a proxy that lazily initializes

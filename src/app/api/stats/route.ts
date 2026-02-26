@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, checkAndClearSeedFlag } from "@/lib/db";
 import { leads, outreachMessages } from "@/lib/db/schema";
 import { eq, sql, and, lt } from "drizzle-orm";
+import { seedDatabase } from "@/lib/db/seed";
 import type { PipelineStage } from "@/types";
 
 export async function GET() {
   try {
+    // Auto-seed on first load if DB is empty
+    if (checkAndClearSeedFlag()) {
+      await seedDatabase();
+    }
+
     const today = new Date().toISOString().split("T")[0];
 
     const [stageCounts, totalLeads, newToday, messagesSent, messagesQueued, responses, avgScore, staleCount] =
