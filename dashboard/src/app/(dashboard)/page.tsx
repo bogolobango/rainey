@@ -17,46 +17,80 @@ import {
   AlertTriangle,
   Play,
   Clock,
+  Loader2,
 } from "lucide-react";
-import { type AgentType, type PipelineStage } from "@/types";
+import { useApi } from "@/hooks/use-api";
+import { type AgentType, type PipelineStage, AGENT_TYPES } from "@/types";
+import { DAILY_SCHEDULE } from "@/lib/agents/orchestrator";
 
-// Sample data — will be replaced by API calls
-const stats = {
-  totalLeads: 247,
-  newLeadsToday: 18,
-  activeProspects: 42,
-  messagesQueuedToday: 20,
-  messagesSentToday: 15,
-  responsesToday: 3,
-  discoveryCallsThisWeek: 4,
-  proposalsSentThisWeek: 2,
-  responseRate: 6.2,
-  avgLeadScore: 7.4,
-  staleProspects: 5,
+interface StatsData {
+  totalLeads: number;
+  newLeadsToday: number;
+  activeProspects: number;
+  messagesQueuedToday: number;
+  messagesSentToday: number;
+  responsesToday: number;
+  discoveryCallsThisWeek: number;
+  proposalsSentThisWeek: number;
+  pipelineByStage: Record<PipelineStage, number>;
+  responseRate: number;
+  avgLeadScore: number;
+  staleProspects: number;
+}
+
+interface AgentRunRow {
+  id: number;
+  agentType: AgentType;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  itemsProcessed: number;
+  summary: string | null;
+}
+
+interface AgentsData {
+  agents: { agentType: AgentType; latestRun: AgentRunRow | null }[];
+}
+
+interface OutreachRow {
+  companyName: string | null;
+  channel: string;
+  templateId: string | null;
+  score: number | null;
+}
+
+interface OutreachData {
+  messages: OutreachRow[];
+  draftCount: number;
+  approvedCount: number;
+}
+
+const DEFAULT_PIPELINE: Record<PipelineStage, number> = {
+  cold: 0, contacted: 0, responded: 0, discovery_booked: 0,
+  demo_completed: 0, proposal_sent: 0, negotiating: 0,
+  closed_won: 0, closed_lost: 0,
 };
 
-const pipelineData: Record<PipelineStage, number> = {
-  cold: 142,
-  contacted: 58,
-  responded: 23,
-  discovery_booked: 12,
-  demo_completed: 6,
-  proposal_sent: 4,
-  negotiating: 2,
-  closed_won: 0,
-  closed_lost: 8,
-};
-
-const agentStatuses: { type: AgentType; status: "idle" | "running" | "completed" | "failed"; lastRun: string; items: number; nextRun: string }[] = [
-  { type: "lead_scout", status: "completed", lastRun: "6:30 AM", items: 50, nextRun: "Tomorrow 6:30 AM" },
-  { type: "outreach_composer", status: "completed", lastRun: "7:00 AM", items: 20, nextRun: "Tomorrow 7:00 AM" },
-  { type: "pipeline_intelligence", status: "idle", lastRun: "7:30 AM", items: 255, nextRun: "5:00 PM" },
-  { type: "prospect_research", status: "running", lastRun: "3:00 PM", items: 2, nextRun: "On demand" },
-  { type: "follow_up_sequencing", status: "completed", lastRun: "10:00 AM", items: 8, nextRun: "Tomorrow 10:00 AM" },
-  { type: "proposal_generator", status: "idle", lastRun: "Yesterday", items: 1, nextRun: "On demand" },
-];
+function getScheduleForAgent(type: AgentType): string {
+  const entry = DAILY_SCHEDULE.find(s => s.agentType === type);
+  return entry?.timeET ?? "On demand";
+}
 
 export default function DashboardPage() {
+  const { data: stats, loading: statsLoading } = useApi<StatsData>("/api/stats");
+  const { data: agentsData, loading: agentsLoading } = useApi<AgentsData>("/api/agents");
+  const { data: outreach } = useApi<OutreachData>("/api/outreach");
+
+  const s = stats ?? {
+    totalLeads: 0, newLeadsToday: 0, activeProspects: 0,
+    messagesQueuedToday: 0, messagesSentToday: 0, responsesToday: 0,
+    discoveryCallsThisWeek: 0, proposalsSentThisWeek: 0, responseRate: 0,
+    avgLeadScore: 0, staleProspects: 0,
+    pipelineByStage: DEFAULT_PIPELINE,
+  };
+
+  const isLoading = statsLoading || agentsLoading;
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -64,7 +98,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-3xl font-display text-foreground">Good morning, Jim</h1>
           <p className="text-sm text-muted-foreground font-sans mt-1">
-            Here&apos;s your BDR command center for today.
+            {isLoading ? "Loading your BDR command center..." : "Here\u2019s your BDR command center for today."}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -80,53 +114,50 @@ export default function DashboardPage() {
       </div>
 
       {/* Today's Priority Alert */}
-      <Card className="border-highlight-coral/30 bg-highlight-coral/5">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-highlight-coral flex-shrink-0" />
-            <div className="flex-1">
-              <p className="text-sm font-medium font-sans text-foreground">
-                {stats.staleProspects} prospects need attention — no activity for 5+ days
-              </p>
-              <p className="text-xs text-muted-foreground font-sans mt-0.5">
-                Chelsea Piers, Big Apple Soccer, Socceroof NYC, Hudson Sports, Brooklyn Futsal
-              </p>
+      {s.staleProspects > 0 && (
+        <Card className="border-highlight-coral/30 bg-highlight-coral/5">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-highlight-coral flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium font-sans text-foreground">
+                  {s.staleProspects} prospect{s.staleProspects !== 1 ? "s" : ""} need attention — no activity for 5+ days
+                </p>
+              </div>
+              <Button variant="outline" size="sm" className="font-sans text-xs">
+                View all
+              </Button>
             </div>
-            <Button variant="outline" size="sm" className="font-sans text-xs">
-              View all
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Key Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Active Prospects"
-          value={stats.activeProspects}
-          subtitle={`${stats.newLeadsToday} new today`}
+          value={s.activeProspects}
+          subtitle={`${s.newLeadsToday} new today`}
           icon={Users}
           variant="purple"
-          trend={{ value: 12, label: "vs last week" }}
         />
         <StatCard
           title="Messages Queued"
-          value={stats.messagesQueuedToday}
-          subtitle={`${stats.messagesSentToday} sent today`}
+          value={s.messagesQueuedToday}
+          subtitle={`${s.messagesSentToday} sent today`}
           icon={Send}
           variant="coral"
         />
         <StatCard
           title="Responses"
-          value={stats.responsesToday}
-          subtitle={`${stats.responseRate}% response rate`}
+          value={s.responsesToday}
+          subtitle={`${s.responseRate}% response rate`}
           icon={MessageSquare}
           variant="green"
-          trend={{ value: 2.1, label: "vs last week" }}
         />
         <StatCard
           title="Discovery Calls"
-          value={stats.discoveryCallsThisWeek}
+          value={s.discoveryCallsThisWeek}
           subtitle="This week"
           icon={Calendar}
           variant="purple"
@@ -135,12 +166,9 @@ export default function DashboardPage() {
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline Funnel — takes 2 cols */}
         <div className="lg:col-span-2">
-          <PipelineFunnel data={pipelineData} />
+          <PipelineFunnel data={s.pipelineByStage as Record<PipelineStage, number>} />
         </div>
-
-        {/* Recent Activity */}
         <div className="lg:col-span-1">
           <RecentActivity />
         </div>
@@ -155,7 +183,7 @@ export default function DashboardPage() {
             </CardTitle>
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="font-sans">
-                {stats.messagesQueuedToday} drafts
+                {outreach?.draftCount ?? 0} drafts
               </Badge>
               <Button variant="outline" size="sm" className="font-sans text-xs">
                 Review All
@@ -164,46 +192,48 @@ export default function DashboardPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {[
-              { company: "Brooklyn Boulders", type: "Cold Email", score: 8.5, locations: 5 },
-              { company: "Asphalt Green", type: "LinkedIn Request", score: 8.2, locations: 4 },
-              { company: "Chelsea Piers", type: "Follow-Up #2", score: 9.1, locations: 3 },
-              { company: "Gotham Padel", type: "Cold Email", score: 7.8, locations: 6 },
-              { company: "Skin Laundry NYC", type: "Cold Email", score: 7.5, locations: 8 },
-            ].map((item) => (
-              <div key={item.company} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <span className="text-xs font-bold text-primary font-sans">
-                      {item.company.charAt(0)}
-                    </span>
+          {outreach && outreach.messages.length > 0 ? (
+            <div className="space-y-3">
+              {outreach.messages.slice(0, 5).map((item, i) => (
+                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <span className="text-xs font-bold text-primary font-sans">
+                        {(item.companyName ?? "?").charAt(0)}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium font-sans text-foreground">{item.companyName}</p>
+                      <p className="text-xs text-muted-foreground font-sans">{item.channel}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium font-sans text-foreground">{item.company}</p>
-                    <p className="text-xs text-muted-foreground font-sans">{item.locations} locations</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge variant="outline" className="font-sans text-xs">
-                    {item.type}
-                  </Badge>
-                  <div className="flex items-center gap-1">
-                    <Target className="h-3 w-3 text-primary" />
-                    <span className="text-xs font-medium font-sans text-primary">{item.score}</span>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="sm" className="text-xs font-sans h-7 text-highlight-green">
-                      Approve
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-xs font-sans h-7">
-                      Edit
-                    </Button>
+                  <div className="flex items-center gap-3">
+                    <Badge variant="outline" className="font-sans text-xs">
+                      {item.templateId ?? item.channel}
+                    </Badge>
+                    {item.score != null && (
+                      <div className="flex items-center gap-1">
+                        <Target className="h-3 w-3 text-primary" />
+                        <span className="text-xs font-medium font-sans text-primary">{item.score}</span>
+                      </div>
+                    )}
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" className="text-xs font-sans h-7 text-highlight-green">
+                        Approve
+                      </Button>
+                      <Button variant="ghost" size="sm" className="text-xs font-sans h-7">
+                        Edit
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground font-sans py-8 text-center">
+              {statsLoading ? <Loader2 className="h-5 w-5 animate-spin mx-auto" /> : "No messages queued yet. Run the Outreach Composer to generate drafts."}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -211,16 +241,19 @@ export default function DashboardPage() {
       <div>
         <h2 className="text-lg font-sans font-semibold text-foreground mb-4">Agent Status</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agentStatuses.map((agent) => (
-            <AgentStatusCard
-              key={agent.type}
-              agentType={agent.type}
-              status={agent.status}
-              lastRun={agent.lastRun}
-              itemsProcessed={agent.items}
-              nextRun={agent.nextRun}
-            />
-          ))}
+          {AGENT_TYPES.map((type) => {
+            const run = agentsData?.agents.find(a => a.agentType === type)?.latestRun;
+            return (
+              <AgentStatusCard
+                key={type}
+                agentType={type}
+                status={run ? (run.status as "idle" | "running" | "completed" | "failed") : "idle"}
+                lastRun={run?.startedAt ? new Date(run.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : undefined}
+                itemsProcessed={run?.itemsProcessed}
+                nextRun={getScheduleForAgent(type)}
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -232,10 +265,10 @@ export default function DashboardPage() {
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
             {[
-              { label: "Outreach Sent", current: 65, target: 100, icon: Send },
-              { label: "Response Rate", current: 6.2, target: 5, icon: MessageSquare, suffix: "%" },
-              { label: "Calls Booked", current: 4, target: 12, icon: Calendar },
-              { label: "Proposals Sent", current: 2, target: 6, icon: TrendingUp },
+              { label: "Outreach Sent", current: s.messagesSentToday, target: 100, icon: Send },
+              { label: "Response Rate", current: s.responseRate, target: 5, icon: MessageSquare, suffix: "%" },
+              { label: "Calls Booked", current: s.discoveryCallsThisWeek, target: 12, icon: Calendar },
+              { label: "Proposals Sent", current: s.proposalsSentThisWeek, target: 6, icon: TrendingUp },
             ].map((metric) => {
               const pct = metric.suffix === "%"
                 ? (metric.current >= metric.target ? 100 : (metric.current / metric.target) * 100)
