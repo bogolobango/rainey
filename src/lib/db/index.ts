@@ -1,8 +1,6 @@
 import { drizzle } from "drizzle-orm/sql-js";
 import initSqlJs, { type Database as SqlJsDatabase } from "sql.js";
 import * as schema from "./schema";
-import fs from "fs";
-import path from "path";
 
 type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -10,26 +8,37 @@ let _db: DrizzleDB | null = null;
 let _sqlDb: SqlJsDatabase | null = null;
 let _initPromise: Promise<DrizzleDB> | null = null;
 
-// Use /tmp on Vercel/v0 (serverless — read-only fs except /tmp), ./data locally
-function getDbPath(): string {
-  const isVercel = !!process.env.VERCEL;
-  const dataDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+/**
+ * Optionally persist to /tmp (Vercel) or ./data (local dev).
+ * Uses dynamic require("fs") so the module doesn't break when bundled
+ * for environments without fs (edge, client tree-shaking, etc.).
+ */
+function tryLoadFromDisk(): Buffer | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
+    const isVercel = !!process.env.VERCEL;
+    const dataDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const dbPath = path.join(dataDir, "bdr.db");
+    if (fs.existsSync(dbPath)) return fs.readFileSync(dbPath);
+  } catch {
+    // fs unavailable (edge runtime, etc.) — start fresh
   }
-  return path.join(dataDir, "bdr.db");
+  return null;
 }
 
 async function initDatabase(): Promise<DrizzleDB> {
   if (_db) return _db;
 
   const SQL = await initSqlJs();
-  const dbPath = getDbPath();
 
-  // Load existing DB file if present, otherwise create fresh
-  if (fs.existsSync(dbPath)) {
+  // Try loading persisted database from disk; fall back to fresh in-memory DB
+  const buffer = tryLoadFromDisk();
+  if (buffer) {
     try {
-      const buffer = fs.readFileSync(dbPath);
       _sqlDb = new SQL.Database(buffer);
     } catch {
       _sqlDb = new SQL.Database();
@@ -184,15 +193,23 @@ async function initDatabase(): Promise<DrizzleDB> {
   return _db;
 }
 
-/** Persist the in-memory sql.js database to disk. */
+/** Persist the in-memory sql.js database to disk (best-effort). */
 export function saveToFile(): void {
   if (!_sqlDb) return;
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
+    const isVercel = !!process.env.VERCEL;
+    const dataDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const dbPath = path.join(dataDir, "bdr.db");
     const data = _sqlDb.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(getDbPath(), buffer);
+    fs.writeFileSync(dbPath, buffer);
   } catch {
-    // Ignore write errors (e.g. read-only filesystem on first deploy)
+    // Ignore write errors (e.g. read-only filesystem, edge runtime)
   }
 }
 

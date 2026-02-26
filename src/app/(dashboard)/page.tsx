@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { type AgentType, type PipelineStage, AGENT_TYPES } from "@/types";
-import { DAILY_SCHEDULE } from "@/lib/agents/orchestrator";
+import { DAILY_SCHEDULE } from "@/lib/agents/schedule";
 
 interface StatsData {
   totalLeads: number;
