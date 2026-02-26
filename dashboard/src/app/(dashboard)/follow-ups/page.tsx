@@ -10,35 +10,33 @@ import {
   Mail,
   Linkedin,
   Clock,
-  Check,
   AlertTriangle,
   Pause,
-  Play,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
+import { useApi } from "@/hooks/use-api";
 
-interface FollowUpSequence {
+interface SequenceRow {
   id: number;
-  company: string;
-  contact: string;
+  leadId: number;
   currentDay: number;
-  totalDays: number;
-  status: "active" | "paused" | "completed" | "exited";
-  nextTouch: string;
-  nextChannel: "email" | "linkedin";
-  touchesSent: number;
-  lastSignal: string | null;
-  pauseReason?: string;
+  status: string;
+  nextTouchAt: string | null;
+  channelHistory: string | null;
+  pausedUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+  companyName: string | null;
+  contactFirst: string | null;
+  contactLast: string | null;
 }
 
-const sequences: FollowUpSequence[] = [
-  { id: 1, company: "Brooklyn Boulders", contact: "Lance Pinn", currentDay: 3, totalDays: 30, status: "active", nextTouch: "Tomorrow", nextChannel: "email", touchesSent: 2, lastSignal: "Email opened 2x" },
-  { id: 2, company: "Gotham Padel", contact: "Marco DiNuzzo", currentDay: 0, totalDays: 30, status: "active", nextTouch: "Day 3 — Feb 28", nextChannel: "email", touchesSent: 1, lastSignal: null },
-  { id: 3, company: "Skin Laundry", contact: "Scott Samson", currentDay: 7, totalDays: 30, status: "active", nextTouch: "Today", nextChannel: "email", touchesSent: 3, lastSignal: "Link clicked — ROI calculator" },
-  { id: 4, company: "Asphalt Green", contact: "Sarah Kim", currentDay: 14, totalDays: 30, status: "active", nextTouch: "Day 21 — Mar 5", nextChannel: "linkedin", touchesSent: 4, lastSignal: "No engagement" },
-  { id: 5, company: "Hudson Sports", contact: "Jake Williams", currentDay: 21, totalDays: 30, status: "paused", nextTouch: "Paused", nextChannel: "email", touchesSent: 4, lastSignal: "Out of office until Mar 3", pauseReason: "OOO detected — resumes Mar 3" },
-  { id: 6, company: "Big Apple Soccer", contact: "Michael Torres", currentDay: 30, totalDays: 30, status: "completed", nextTouch: "Moved to Nurture", nextChannel: "email", touchesSent: 6, lastSignal: "No response — sequence complete" },
-];
+interface FollowUpsData {
+  sequences: SequenceRow[];
+}
+
+const TOTAL_DAYS = 30;
 
 const touchpointSchedule = [
   { day: 0, label: "Initial Outreach", channels: ["Email", "LinkedIn"] },
@@ -50,8 +48,16 @@ const touchpointSchedule = [
 ];
 
 export default function FollowUpsPage() {
+  const { data, loading } = useApi<FollowUpsData>("/api/follow-ups");
+  const sequences = data?.sequences ?? [];
+
   const activeCount = sequences.filter(s => s.status === "active").length;
-  const dueToday = sequences.filter(s => s.nextTouch === "Today" || s.nextTouch === "Tomorrow").length;
+  const dueToday = sequences.filter(s => {
+    if (!s.nextTouchAt) return false;
+    const touchDate = new Date(s.nextTouchAt).toDateString();
+    const today = new Date().toDateString();
+    return touchDate === today;
+  }).length;
 
   return (
     <div className="p-6 space-y-6">
@@ -60,7 +66,7 @@ export default function FollowUpsPage() {
         <div>
           <h1 className="text-3xl font-display text-foreground">Follow-Up Sequences</h1>
           <p className="text-sm text-muted-foreground font-sans mt-1">
-            {activeCount} active sequences, {dueToday} touches due soon
+            {loading ? "Loading sequences..." : `${activeCount} active sequences, ${dueToday} touches due today`}
           </p>
         </div>
         <Button size="sm" className="font-sans rounded-full">
@@ -102,91 +108,99 @@ export default function FollowUpsPage() {
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[500px]">
-            <div className="space-y-3">
-              {sequences.map((seq) => (
-                <div
-                  key={seq.id}
-                  className={`p-4 rounded-xl border ${
-                    seq.status === "paused" ? "border-chart-5/30 bg-chart-5/5" :
-                    seq.status === "completed" ? "border-muted bg-muted/30" :
-                    seq.lastSignal?.includes("clicked") ? "border-highlight-green/30 bg-highlight-green/5" :
-                    "border-border"
-                  } transition-all`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <span className="text-sm font-bold text-primary font-sans">
-                          {seq.company.charAt(0)}
-                        </span>
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : sequences.length === 0 ? (
+              <p className="text-sm text-muted-foreground font-sans py-8 text-center">
+                No follow-up sequences active. The Follow-Up Sequencing agent will create them automatically.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {sequences.map((seq) => {
+                  const contactName = [seq.contactFirst, seq.contactLast].filter(Boolean).join(" ") || "Unknown";
+                  const channelHistory: string[] = seq.channelHistory ? JSON.parse(seq.channelHistory) : [];
+                  const lastChannel = channelHistory.length > 0 ? channelHistory[channelHistory.length - 1] : "email";
+                  const nextTouchLabel = seq.nextTouchAt
+                    ? new Date(seq.nextTouchAt).toLocaleDateString([], { month: "short", day: "numeric" })
+                    : seq.status === "paused" ? "Paused" : "—";
+
+                  return (
+                    <div
+                      key={seq.id}
+                      className={`p-4 rounded-xl border ${
+                        seq.status === "paused" ? "border-chart-5/30 bg-chart-5/5" :
+                        seq.status === "completed" ? "border-muted bg-muted/30" :
+                        "border-border"
+                      } transition-all`}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <span className="text-sm font-bold text-primary font-sans">
+                              {(seq.companyName ?? "?").charAt(0)}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold font-sans text-foreground">{seq.companyName}</p>
+                            <p className="text-xs text-muted-foreground font-sans">{contactName}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              seq.status === "active" ? "default" :
+                              seq.status === "paused" ? "warning" :
+                              seq.status === "completed" ? "secondary" :
+                              "success"
+                            }
+                            className="font-sans text-xs"
+                          >
+                            {seq.status === "paused" && <Pause className="h-3 w-3 mr-1" />}
+                            {seq.status}
+                          </Badge>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-semibold font-sans text-foreground">{seq.company}</p>
-                        <p className="text-xs text-muted-foreground font-sans">{seq.contact}</p>
+
+                      {/* Progress bar */}
+                      <div className="mb-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-muted-foreground font-sans">
+                            Day {seq.currentDay} / {TOTAL_DAYS}
+                          </span>
+                          <span className="text-xs text-muted-foreground font-sans">
+                            {channelHistory.length} touches sent
+                          </span>
+                        </div>
+                        <Progress value={(seq.currentDay / TOTAL_DAYS) * 100} />
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant={
-                          seq.status === "active" ? "default" :
-                          seq.status === "paused" ? "warning" :
-                          seq.status === "completed" ? "secondary" :
-                          "success"
-                        }
-                        className="font-sans text-xs"
-                      >
-                        {seq.status === "paused" && <Pause className="h-3 w-3 mr-1" />}
-                        {seq.status}
-                      </Badge>
-                    </div>
-                  </div>
 
-                  {/* Progress bar */}
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground font-sans">
-                        Day {seq.currentDay} / {seq.totalDays}
-                      </span>
-                      <span className="text-xs text-muted-foreground font-sans">
-                        {seq.touchesSent} touches sent
-                      </span>
-                    </div>
-                    <Progress value={(seq.currentDay / seq.totalDays) * 100} />
-                  </div>
+                      {/* Details */}
+                      <div className="flex items-center justify-between text-xs font-sans">
+                        <div className="flex items-center gap-4">
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            Next: {nextTouchLabel}
+                          </span>
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            {lastChannel === "email" ? <Mail className="h-3 w-3" /> : <Linkedin className="h-3 w-3" />}
+                            {lastChannel}
+                          </span>
+                        </div>
+                      </div>
 
-                  {/* Details */}
-                  <div className="flex items-center justify-between text-xs font-sans">
-                    <div className="flex items-center gap-4">
-                      <span className="flex items-center gap-1 text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        Next: {seq.nextTouch}
-                      </span>
-                      <span className="flex items-center gap-1 text-muted-foreground">
-                        {seq.nextChannel === "email" ? <Mail className="h-3 w-3" /> : <Linkedin className="h-3 w-3" />}
-                        {seq.nextChannel}
-                      </span>
+                      {seq.pausedUntil && (
+                        <p className="text-xs text-chart-5 font-sans mt-2 flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          Paused until {new Date(seq.pausedUntil).toLocaleDateString()}
+                        </p>
+                      )}
                     </div>
-                    {seq.lastSignal && (
-                      <span className={`${
-                        seq.lastSignal.includes("clicked") ? "text-highlight-green" :
-                        seq.lastSignal.includes("opened") ? "text-chart-4" :
-                        seq.lastSignal.includes("Out of office") ? "text-chart-5" :
-                        "text-muted-foreground"
-                      }`}>
-                        {seq.lastSignal}
-                      </span>
-                    )}
-                  </div>
-
-                  {seq.pauseReason && (
-                    <p className="text-xs text-chart-5 font-sans mt-2 flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3" />
-                      {seq.pauseReason}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </ScrollArea>
         </CardContent>
       </Card>

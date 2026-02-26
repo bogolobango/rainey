@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { leads } from "@/lib/db/schema";
-import { desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql, type SQL } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -12,10 +12,8 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get("offset") || "0");
 
   try {
-    let query = db.select().from(leads);
-
     // Build conditions
-    const conditions = [];
+    const conditions: SQL[] = [];
     if (vertical) conditions.push(eq(leads.vertical, vertical));
     if (stage) conditions.push(eq(leads.pipelineStage, stage));
     if (search) conditions.push(like(leads.companyName, `%${search}%`));
@@ -23,7 +21,7 @@ export async function GET(request: NextRequest) {
     const results = await db
       .select()
       .from(leads)
-      .where(conditions.length > 0 ? sql`${conditions.map(c => c).join(" AND ")}` : undefined)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(leads.score))
       .limit(limit)
       .offset(offset);

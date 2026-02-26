@@ -6,38 +6,38 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   GitBranch,
-  ChevronRight,
   Clock,
   MessageSquare,
   Calendar,
   FileText,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
-import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from "@/types";
+import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage, type Lead } from "@/types";
+import { useApi } from "@/hooks/use-api";
 
-interface PipelineProspect {
-  id: number;
-  company: string;
-  contact: string;
-  stage: PipelineStage;
-  lastActivity: string;
-  lastActivityDate: string;
-  daysInStage: number;
-  nextAction: string;
-  isStale: boolean;
+interface LeadsData {
+  leads: Lead[];
+  total: number;
 }
 
-const prospects: PipelineProspect[] = [
-  { id: 1, company: "Chelsea Piers", contact: "David Tewksbury", stage: "contacted", lastActivity: "Email opened 3x", lastActivityDate: "2 days ago", daysInStage: 5, nextAction: "Send follow-up #2", isStale: true },
-  { id: 2, company: "Socceroof", contact: "Lesiba Mashishi", stage: "discovery_booked", lastActivity: "Call booked Thu 2PM", lastActivityDate: "Today", daysInStage: 1, nextAction: "Prepare call brief", isStale: false },
-  { id: 3, company: "Arena Sports", contact: "Emily Chen", stage: "demo_completed", lastActivity: "Demo completed", lastActivityDate: "Yesterday", daysInStage: 1, nextAction: "Generate proposal", isStale: false },
-  { id: 4, company: "Big Apple Soccer", contact: "Michael Torres", stage: "contacted", lastActivity: "Email sent", lastActivityDate: "6 days ago", daysInStage: 6, nextAction: "Follow-up needed", isStale: true },
-  { id: 5, company: "Brooklyn Futsal", contact: "Ana Rodriguez", stage: "responded", lastActivity: "Replied: interested", lastActivityDate: "1 day ago", daysInStage: 1, nextAction: "Book discovery call", isStale: false },
-  { id: 6, company: "Asphalt Green", contact: "Sarah Kim", stage: "proposal_sent", lastActivity: "Proposal viewed", lastActivityDate: "3 days ago", daysInStage: 4, nextAction: "Follow up on proposal", isStale: false },
-  { id: 7, company: "Hudson Sports", contact: "Jake Williams", stage: "contacted", lastActivity: "No response", lastActivityDate: "7 days ago", daysInStage: 7, nextAction: "Channel switch to LinkedIn", isStale: true },
-];
+interface PipelineEvent {
+  id: number;
+  leadId: number;
+  fromStage: string | null;
+  toStage: string;
+  trigger: string;
+  notes: string | null;
+  createdAt: string;
+}
 
-const stageIcons: Partial<Record<PipelineStage, typeof Clock>> = {
+interface PipelineData {
+  stageCounts: Record<string, number>;
+  totalLeads: number;
+  recentEvents: PipelineEvent[];
+}
+
+const stageIcons: Partial<Record<PipelineStage, React.ComponentType<{ className?: string }>>> = {
   cold: Clock,
   contacted: MessageSquare,
   responded: MessageSquare,
@@ -60,13 +60,27 @@ const stageColumnColors: Partial<Record<PipelineStage, string>> = {
 };
 
 export default function PipelinePage() {
-  const staleCount = prospects.filter(p => p.isStale).length;
+  const { data: leadsData, loading: leadsLoading } = useApi<LeadsData>("/api/leads?limit=200");
+  const { data: pipelineData, loading: pipelineLoading } = useApi<PipelineData>("/api/pipeline");
 
-  // Group prospects by stage
+  const allLeads = leadsData?.leads ?? [];
+  const events = pipelineData?.recentEvents ?? [];
+  const isLoading = leadsLoading || pipelineLoading;
+
+  // Group leads by pipeline stage
   const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
-    acc[stage] = prospects.filter(p => p.stage === stage);
+    acc[stage] = allLeads.filter(l => l.pipelineStage === stage);
     return acc;
-  }, {} as Record<PipelineStage, PipelineProspect[]>);
+  }, {} as Record<PipelineStage, Lead[]>);
+
+  // Check for stale (no activity 5+ days)
+  const fiveDaysAgo = new Date(Date.now() - 5 * 86400000).toISOString();
+  const staleIds = new Set(
+    allLeads
+      .filter(l => l.updatedAt < fiveDaysAgo && !["cold", "closed_won", "closed_lost"].includes(l.pipelineStage))
+      .map(l => l.id)
+  );
+  const staleCount = staleIds.size;
 
   // Only show stages that have prospects or are key stages
   const activeStages = PIPELINE_STAGES.filter(
@@ -81,7 +95,7 @@ export default function PipelinePage() {
         <div>
           <h1 className="text-3xl font-display text-foreground">Pipeline Tracker</h1>
           <p className="text-sm text-muted-foreground font-sans mt-1">
-            {prospects.length} active prospects across {activeStages.length} stages
+            {isLoading ? "Loading pipeline..." : `${allLeads.length} active prospects across ${activeStages.length} stages`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -98,68 +112,78 @@ export default function PipelinePage() {
       </div>
 
       {/* Kanban Board */}
-      <ScrollArea className="w-full">
-        <div className="flex gap-4 min-w-max pb-4">
-          {activeStages.map((stage) => {
-            const stageProspects = byStage[stage] || [];
-            return (
-              <div key={stage} className="w-72 flex-shrink-0">
-                <Card className={`border-t-4 ${stageColumnColors[stage] || "border-t-muted"}`}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm font-sans font-semibold">
-                        {PIPELINE_STAGE_LABELS[stage]}
-                      </CardTitle>
-                      <Badge variant="secondary" className="font-sans text-xs">
-                        {stageProspects.length}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {stageProspects.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-muted-foreground font-sans">
-                        No prospects
-                      </div>
-                    ) : (
-                      stageProspects.map((prospect) => (
-                        <div
-                          key={prospect.id}
-                          className={`p-3 rounded-lg border ${prospect.isStale ? "border-highlight-coral/30 bg-highlight-coral/5" : "border-border bg-background"} hover:border-primary/20 transition-colors cursor-pointer`}
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div>
-                              <p className="text-sm font-semibold font-sans text-foreground">
-                                {prospect.company}
-                              </p>
-                              <p className="text-xs text-muted-foreground font-sans">
-                                {prospect.contact}
-                              </p>
-                            </div>
-                            {prospect.isStale && (
-                              <AlertTriangle className="h-4 w-4 text-highlight-coral flex-shrink-0" />
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground font-sans">
-                            {prospect.lastActivity}
-                          </p>
-                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
-                            <span className="text-[10px] text-muted-foreground font-sans">
-                              {prospect.lastActivityDate}
-                            </span>
-                            <span className="text-[10px] font-medium font-sans text-primary">
-                              {prospect.nextAction}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            );
-          })}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="w-full">
+          <div className="flex gap-4 min-w-max pb-4">
+            {activeStages.map((stage) => {
+              const stageLeads = byStage[stage] || [];
+              return (
+                <div key={stage} className="w-72 flex-shrink-0">
+                  <Card className={`border-t-4 ${stageColumnColors[stage] || "border-t-muted"}`}>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-sans font-semibold flex items-center gap-1.5">
+                          {stageIcons[stage] && (() => { const Icon = stageIcons[stage]!; return <Icon className="h-3.5 w-3.5 text-muted-foreground" />; })()}
+                          {PIPELINE_STAGE_LABELS[stage]}
+                        </CardTitle>
+                        <Badge variant="secondary" className="font-sans text-xs">
+                          {stageLeads.length}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {stageLeads.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-muted-foreground font-sans">
+                          No prospects
+                        </div>
+                      ) : (
+                        stageLeads.map((lead) => {
+                          const isStale = staleIds.has(lead.id);
+                          const contactName = [lead.firstName, lead.lastName].filter(Boolean).join(" ");
+                          return (
+                            <div
+                              key={lead.id}
+                              className={`p-3 rounded-lg border ${isStale ? "border-highlight-coral/30 bg-highlight-coral/5" : "border-border bg-background"} hover:border-primary/20 transition-colors cursor-pointer`}
+                            >
+                              <div className="flex items-start justify-between mb-2">
+                                <div>
+                                  <p className="text-sm font-semibold font-sans text-foreground">
+                                    {lead.companyName}
+                                  </p>
+                                  {contactName && (
+                                    <p className="text-xs text-muted-foreground font-sans">
+                                      {contactName}
+                                    </p>
+                                  )}
+                                </div>
+                                {isStale && (
+                                  <AlertTriangle className="h-4 w-4 text-highlight-coral flex-shrink-0" />
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
+                                <span className="text-[10px] text-muted-foreground font-sans">
+                                  Score: {lead.score}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground font-sans">
+                                  {lead.locationCount} loc
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      )}
 
       {/* Activity Log */}
       <Card>
@@ -167,28 +191,32 @@ export default function PipelinePage() {
           <CardTitle className="text-base font-sans font-semibold">Pipeline Activity Log</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {[
-              { time: "10:30 AM", event: "Brooklyn Futsal replied to cold email — positive interest", type: "reply" as const },
-              { time: "9:15 AM", event: "Socceroof moved to Discovery Booked — call Thu 2PM ET", type: "advance" as const },
-              { time: "8:45 AM", event: "Arena Sports completed demo — proposal generation triggered", type: "advance" as const },
-              { time: "8:00 AM", event: "20 outreach messages sent in morning batch", type: "outreach" as const },
-              { time: "7:30 AM", event: "Morning briefing generated — 3 priorities flagged", type: "system" as const },
-              { time: "6:30 AM", event: "Lead Scout discovered 12 new sports facility leads", type: "discovery" as const },
-            ].map((entry, i) => (
-              <div key={i} className="flex items-start gap-3 text-sm font-sans">
-                <span className="text-xs text-muted-foreground w-16 flex-shrink-0 pt-0.5">{entry.time}</span>
-                <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-                  entry.type === "reply" ? "bg-highlight-green" :
-                  entry.type === "advance" ? "bg-primary" :
-                  entry.type === "outreach" ? "bg-chart-4" :
-                  entry.type === "discovery" ? "bg-chart-5" :
-                  "bg-muted-foreground"
-                }`} />
-                <p className="text-foreground">{entry.event}</p>
-              </div>
-            ))}
-          </div>
+          {events.length === 0 ? (
+            <p className="text-sm text-muted-foreground font-sans py-4 text-center">
+              No pipeline events recorded yet.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {events.slice(0, 10).map((event) => (
+                <div key={event.id} className="flex items-start gap-3 text-sm font-sans">
+                  <span className="text-xs text-muted-foreground w-20 flex-shrink-0 pt-0.5">
+                    {new Date(event.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </span>
+                  <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                    event.trigger === "email_reply" ? "bg-highlight-green" :
+                    event.trigger === "calendar_event" ? "bg-chart-5" :
+                    "bg-primary"
+                  }`} />
+                  <p className="text-foreground">
+                    {event.fromStage
+                      ? `Moved from ${PIPELINE_STAGE_LABELS[event.fromStage as PipelineStage] ?? event.fromStage} → ${PIPELINE_STAGE_LABELS[event.toStage as PipelineStage] ?? event.toStage}`
+                      : `Entered ${PIPELINE_STAGE_LABELS[event.toStage as PipelineStage] ?? event.toStage}`}
+                    {event.notes ? ` — ${event.notes}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
