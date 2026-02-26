@@ -9,6 +9,7 @@ import {
   updateMessageEngagement,
   pauseFollowUpSequences,
 } from "@/lib/webhooks/utils";
+import { handleSignalTrigger } from "@/lib/agents/orchestrator";
 
 /**
  * POST /api/webhooks/instantly
@@ -114,6 +115,8 @@ export async function POST(request: NextRequest) {
       if (message) {
         await updateMessageEngagement(message.id, { status: "opened", openedAt: now });
       }
+      // Trigger orchestrator — tracks open count, accelerates if 3+
+      await handleSignalTrigger({ type: "email_opened", leadId: lead.id, openCount: 1 }).catch(console.error);
       break;
     }
 
@@ -121,6 +124,12 @@ export async function POST(request: NextRequest) {
       if (message) {
         await updateMessageEngagement(message.id, { status: "clicked", clickedAt: now });
       }
+      // Trigger orchestrator — generates warm follow-up, accelerates sequence, notifies Jim
+      await handleSignalTrigger({
+        type: "link_clicked",
+        leadId: lead.id,
+        url: payload.subject ?? "email link",
+      }).catch(console.error);
       break;
     }
 
@@ -137,6 +146,8 @@ export async function POST(request: NextRequest) {
       pipelineAdvanced = !!result;
       await pauseFollowUpSequences(lead.id, "instantly_reply");
       sequencesPaused = true;
+      // Trigger orchestrator — exits sequences, notifies Jim for immediate response
+      await handleSignalTrigger({ type: "prospect_replied", leadId: lead.id }).catch(console.error);
       break;
     }
 
@@ -147,6 +158,8 @@ export async function POST(request: NextRequest) {
       // Pause sequence — bad email, needs review
       await pauseFollowUpSequences(lead.id, "email_bounced");
       sequencesPaused = true;
+      // Trigger orchestrator — attempts Apollo email recovery, restarts sequence
+      await handleSignalTrigger({ type: "email_bounced", leadId: lead.id }).catch(console.error);
       break;
     }
 

@@ -157,12 +157,34 @@ export async function POST(request: NextRequest) {
             });
 
             if (campaignId && leadsAdded > 0) {
+              const sentLeadIds = new Set<number>();
               for (const e of approvedEmails) {
                 await db.update(outreachMessages)
                   .set({ status: "sent", sentAt: sql`datetime('now')` })
                   .where(eq(outreachMessages.id, e.msgId));
+                sentLeadIds.add(e.leadId);
               }
-              summary += ` | Launched Instantly campaign: ${leadsAdded} leads pushed.`;
+
+              // Auto-create follow-up sequences for newly sent leads
+              for (const leadId of sentLeadIds) {
+                // Check if a sequence already exists for this lead
+                const existingSeq = await db
+                  .select({ id: followUpSequences.id })
+                  .from(followUpSequences)
+                  .where(eq(followUpSequences.leadId, leadId))
+                  .limit(1);
+
+                if (existingSeq.length === 0) {
+                  await db.insert(followUpSequences).values({
+                    leadId,
+                    currentDay: 0,
+                    status: "active",
+                    channelHistory: JSON.stringify(["email"]),
+                  });
+                }
+              }
+
+              summary += ` | Launched Instantly campaign: ${leadsAdded} leads pushed. Created ${sentLeadIds.size} follow-up sequence(s).`;
             }
           }
 

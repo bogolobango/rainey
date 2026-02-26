@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, getDb } from "@/lib/db";
-import { callPreps, pipelineEvents } from "@/lib/db/schema";
+import { pipelineEvents } from "@/lib/db/schema";
 import {
   verifyHmacSignature,
   findLeadByEmail,
@@ -8,6 +8,7 @@ import {
   advancePipeline,
   exitFollowUpSequences,
 } from "@/lib/webhooks/utils";
+import { handleSignalTrigger } from "@/lib/agents/orchestrator";
 
 /**
  * POST /api/webhooks/calendar
@@ -116,18 +117,12 @@ export async function POST(request: NextRequest) {
     // Exit active follow-up sequences — prospect is engaged
     await exitFollowUpSequences(lead.id);
 
-    // Scaffold a call prep doc for the Prospect Research agent to fill
-    await db.insert(callPreps).values({
+    // Trigger orchestrator — generates full call prep doc with financial model + killer questions
+    await handleSignalTrigger({
+      type: "discovery_booked",
       leadId: lead.id,
       callDate: scheduledAt,
-      companySnapshot: "",
-      painSignals: "[]",
-      financialModel: "{}",
-      killerQuestions: "[]",
-      objectionHandles: "{}",
-      recommendedCaseStudy: "",
-      competitiveIntel: "",
-    });
+    }).catch(console.error);
 
     console.log(
       `[webhook:calendar] Discovery call booked for ${lead.companyName} (lead #${lead.id}) at ${dateLabel}` +

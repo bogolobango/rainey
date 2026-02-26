@@ -8,6 +8,7 @@ import {
   updateMessageEngagement,
   pauseFollowUpSequences,
 } from "@/lib/webhooks/utils";
+import { handleSignalTrigger } from "@/lib/agents/orchestrator";
 
 /**
  * POST /api/webhooks/gmail
@@ -95,6 +96,9 @@ export async function POST(request: NextRequest) {
 
   // ── Pause follow-up sequences ──
   await pauseFollowUpSequences(lead.id, "email_reply");
+
+  // ── Trigger orchestrator — exits sequences, notifies Jim immediately ──
+  await handleSignalTrigger({ type: "prospect_replied", leadId: lead.id }).catch(console.error);
 
   console.log(
     `[webhook:gmail] Processed reply from ${senderEmail} (lead #${lead.id} ${lead.companyName})` +

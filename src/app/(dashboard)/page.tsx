@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { AgentStatusCard } from "@/components/dashboard/agent-status-card";
 import { PipelineFunnel } from "@/components/dashboard/pipeline-funnel";
@@ -18,10 +19,25 @@ import {
   Play,
   Clock,
   Loader2,
+  CheckCircle2,
+  XCircle,
+  Zap,
+  BarChart3,
 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { type AgentType, type PipelineStage, AGENT_TYPES } from "@/types";
 import { DAILY_SCHEDULE } from "@/lib/agents/schedule";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface WeeklyPacing {
+  discoveryCallsBooked: number;
+  target: number;
+  onTrack: boolean;
+  pace: string;
+  daysLeftInWeek: number;
+  callsNeeded: number;
+}
 
 interface StatsData {
   totalLeads: number;
@@ -36,6 +52,7 @@ interface StatsData {
   responseRate: number;
   avgLeadScore: number;
   staleProspects: number;
+  weeklyPacing?: WeeklyPacing;
 }
 
 interface AgentRunRow {
@@ -53,16 +70,45 @@ interface AgentsData {
 }
 
 interface OutreachRow {
+  id: number;
   companyName: string | null;
   channel: string;
   templateId: string | null;
   score: number | null;
+  status: string;
 }
 
 interface OutreachData {
   messages: OutreachRow[];
   draftCount: number;
   approvedCount: number;
+}
+
+interface ActionItem {
+  priority: number;
+  leadId: number;
+  companyName: string;
+  stage: string;
+  action: string;
+  reason: string;
+  urgency: "critical" | "high" | "medium" | "low";
+}
+
+interface TemplatePerf {
+  templateId: string;
+  sent: number;
+  opened: number;
+  clicked: number;
+  replied: number;
+  openRate: number;
+  clickRate: number;
+  replyRate: number;
+}
+
+interface AnalyticsData {
+  actions?: ActionItem[];
+  templates?: TemplatePerf[];
+  pacing?: WeeklyPacing;
 }
 
 const DEFAULT_PIPELINE: Record<PipelineStage, number> = {
@@ -79,7 +125,9 @@ function getScheduleForAgent(type: AgentType): string {
 export default function DashboardPage() {
   const { data: stats, loading: statsLoading } = useApi<StatsData>("/api/stats");
   const { data: agentsData, loading: agentsLoading } = useApi<AgentsData>("/api/agents");
-  const { data: outreach } = useApi<OutreachData>("/api/outreach");
+  const { data: outreach, refetch: refetchOutreach } = useApi<OutreachData>("/api/outreach");
+  const { data: analytics } = useApi<AnalyticsData>("/api/analytics?view=actions,templates");
+  const [approving, setApproving] = useState<Record<number, boolean>>({});
 
   const s = stats ?? {
     totalLeads: 0, newLeadsToday: 0, activeProspects: 0,
@@ -89,7 +137,41 @@ export default function DashboardPage() {
     pipelineByStage: DEFAULT_PIPELINE,
   };
 
+  const pacing = stats?.weeklyPacing;
   const isLoading = statsLoading || agentsLoading;
+
+  // ── Outreach approval handler ──
+  async function handleApprove(messageId: number) {
+    setApproving(prev => ({ ...prev, [messageId]: true }));
+    try {
+      await fetch("/api/outreach", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve", messageIds: [messageId] }),
+      });
+      refetchOutreach();
+    } finally {
+      setApproving(prev => ({ ...prev, [messageId]: false }));
+    }
+  }
+
+  async function handleApproveAll() {
+    await fetch("/api/outreach", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve_all" }),
+    });
+    refetchOutreach();
+  }
+
+  async function handleReject(messageId: number) {
+    await fetch("/api/outreach", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject", messageIds: [messageId] }),
+    });
+    refetchOutreach();
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -112,6 +194,34 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Weekly Call Target Pacing */}
+      {pacing && (
+        <Card className={pacing.onTrack ? "border-highlight-green/30 bg-highlight-green/5" : "border-highlight-coral/30 bg-highlight-coral/5"}>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Target className={`h-5 w-5 flex-shrink-0 ${pacing.onTrack ? "text-highlight-green" : "text-highlight-coral"}`} />
+              <div className="flex-1">
+                <p className="text-sm font-medium font-sans text-foreground">
+                  Weekly Target: {pacing.discoveryCallsBooked}/{pacing.target} discovery calls booked
+                </p>
+                <p className="text-xs text-muted-foreground font-sans mt-0.5">{pacing.pace}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-24 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${pacing.onTrack ? "bg-highlight-green" : "bg-highlight-coral"}`}
+                    style={{ width: `${Math.min((pacing.discoveryCallsBooked / pacing.target) * 100, 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium font-sans text-muted-foreground">
+                  {pacing.daysLeftInWeek}d left
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Today's Priority Alert */}
       {s.staleProspects > 0 && (
@@ -164,13 +274,101 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Main Grid */}
+      {/* Main Grid: Pipeline + Action List */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-6">
           <PipelineFunnel data={s.pipelineByStage as Record<PipelineStage, number>} />
+
+          {/* Daily Action List */}
+          {analytics?.actions && analytics.actions.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base font-sans font-semibold flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-highlight-coral" />
+                    Today&apos;s Actions
+                  </CardTitle>
+                  <Badge variant="secondary" className="font-sans">
+                    {analytics.actions.length} items
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {analytics.actions.slice(0, 6).map((item, i) => (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                      <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
+                        item.urgency === "critical" ? "bg-red-500" :
+                        item.urgency === "high" ? "bg-highlight-coral" :
+                        item.urgency === "medium" ? "bg-yellow-500" : "bg-muted-foreground"
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium font-sans text-foreground truncate">
+                            {item.companyName}
+                          </p>
+                          <Badge variant="outline" className="text-[10px] font-sans flex-shrink-0">
+                            {item.stage}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-foreground font-sans mt-0.5">{item.action}</p>
+                        <p className="text-xs text-muted-foreground font-sans">{item.reason}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
-        <div className="lg:col-span-1">
+
+        <div className="lg:col-span-1 space-y-6">
           <RecentActivity />
+
+          {/* Template Performance */}
+          {analytics?.templates && analytics.templates.some(t => t.sent > 0) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-sans font-semibold flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-highlight-purple" />
+                  Template Performance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {analytics.templates.filter(t => t.sent > 0).map((t) => (
+                    <div key={t.templateId} className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium font-sans text-foreground">
+                          Template {t.templateId}
+                        </span>
+                        <span className="text-xs text-muted-foreground font-sans">
+                          {t.sent} sent
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs font-sans">
+                        <span className="text-muted-foreground">
+                          Open <span className="text-foreground font-medium">{t.openRate}%</span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          Click <span className="text-foreground font-medium">{t.clickRate}%</span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          Reply <span className="text-highlight-green font-medium">{t.replyRate}%</span>
+                        </span>
+                      </div>
+                      <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-highlight-purple rounded-full"
+                          style={{ width: `${Math.min(t.openRate, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -185,17 +383,25 @@ export default function DashboardPage() {
               <Badge variant="secondary" className="font-sans">
                 {outreach?.draftCount ?? 0} drafts
               </Badge>
-              <Button variant="outline" size="sm" className="font-sans text-xs">
-                Review All
-              </Button>
+              {(outreach?.draftCount ?? 0) > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="font-sans text-xs text-highlight-green"
+                  onClick={handleApproveAll}
+                >
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Approve All
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
         <CardContent>
           {outreach && outreach.messages.length > 0 ? (
             <div className="space-y-3">
-              {outreach.messages.slice(0, 5).map((item, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
+              {outreach.messages.slice(0, 5).map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                       <span className="text-xs font-bold text-primary font-sans">
@@ -211,20 +417,43 @@ export default function DashboardPage() {
                     <Badge variant="outline" className="font-sans text-xs">
                       {item.templateId ?? item.channel}
                     </Badge>
+                    {item.status === "approved" && (
+                      <Badge className="font-sans text-xs bg-highlight-green/10 text-highlight-green border-highlight-green/30">
+                        Approved
+                      </Badge>
+                    )}
                     {item.score != null && (
                       <div className="flex items-center gap-1">
                         <Target className="h-3 w-3 text-primary" />
                         <span className="text-xs font-medium font-sans text-primary">{item.score}</span>
                       </div>
                     )}
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" className="text-xs font-sans h-7 text-highlight-green">
-                        Approve
-                      </Button>
-                      <Button variant="ghost" size="sm" className="text-xs font-sans h-7">
-                        Edit
-                      </Button>
-                    </div>
+                    {item.status === "draft" && (
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs font-sans h-7 text-highlight-green"
+                          onClick={() => handleApprove(item.id)}
+                          disabled={approving[item.id]}
+                        >
+                          {approving[item.id] ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <><CheckCircle2 className="h-3 w-3 mr-1" />Approve</>
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs font-sans h-7 text-highlight-coral"
+                          onClick={() => handleReject(item.id)}
+                        >
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -267,7 +496,7 @@ export default function DashboardPage() {
             {[
               { label: "Outreach Sent", current: s.messagesSentToday, target: 100, icon: Send },
               { label: "Response Rate", current: s.responseRate, target: 5, icon: MessageSquare, suffix: "%" },
-              { label: "Calls Booked", current: s.discoveryCallsThisWeek, target: 12, icon: Calendar },
+              { label: "Calls Booked", current: pacing?.discoveryCallsBooked ?? s.discoveryCallsThisWeek, target: pacing?.target ?? 3, icon: Calendar },
               { label: "Proposals Sent", current: s.proposalsSentThisWeek, target: 6, icon: TrendingUp },
             ].map((metric) => {
               const pct = metric.suffix === "%"
