@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDb } from "@/lib/db";
 import {
   verifyHmacSignature,
   findLeadByEmail,
@@ -30,6 +31,7 @@ import {
  * validated against WEBHOOK_SECRET_GMAIL env var.
  */
 export async function POST(request: NextRequest) {
+  await getDb();
   const rawBody = await request.text();
 
   // ── Signature verification ──

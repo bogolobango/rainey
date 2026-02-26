@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { callPreps, pipelineEvents } from "@/lib/db/schema";
 import {
   verifyHmacSignature,
@@ -50,6 +50,7 @@ interface CalendarPayload {
 }
 
 export async function POST(request: NextRequest) {
+  await getDb();
   const rawBody = await request.text();
 
   // ── Signature verification ──

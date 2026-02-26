@@ -12,7 +12,7 @@
  * 5. Insert enriched, scored leads into the database
  */
 
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { leads, agentRuns } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { chatJSON } from "@/lib/integrations/openai";
@@ -343,6 +343,7 @@ export async function runLeadScout(): Promise<{
   duplicatesSkipped: number;
   summary: string;
 }> {
+  await getDb();
   // Create agent run record
   const [run] = await db.insert(agentRuns).values({
     agentType: "lead_scout",

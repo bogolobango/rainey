@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { leads, pipelineEvents } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 
 // GET /api/pipeline — Returns pipeline stats and stage counts
 export async function GET() {
   try {
+    await getDb();
     const stageCounts = await db
       .select({
         stage: leads.pipelineStage,
@@ -38,6 +39,7 @@ export async function GET() {
 // POST /api/pipeline — Move a prospect to a new stage
 export async function POST(request: NextRequest) {
   try {
+    await getDb();
     const body = await request.json();
     const { leadId, toStage, trigger, notes } = body;
 

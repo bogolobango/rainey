@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { agentRuns, leads, outreachMessages, followUpSequences, callPreps, proposals } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import type { AgentType, Lead, Channel } from "@/types";
@@ -22,6 +22,7 @@ function hydrateLead(row: Record<string, unknown>): Lead {
 // GET /api/agents — Returns status of all agents
 export async function GET() {
   try {
+    await getDb();
     const agentTypes: AgentType[] = [
       "lead_scout",
       "outreach_composer",
@@ -56,6 +57,7 @@ export async function GET() {
 // POST /api/agents — Trigger an agent run
 export async function POST(request: NextRequest) {
   try {
+    await getDb();
     const body = await request.json();
     const { agentType } = body as { agentType: AgentType };
 

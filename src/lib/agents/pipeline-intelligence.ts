@@ -9,7 +9,7 @@
  *                Demo Completed → Proposal Sent → Negotiating → Closed Won/Lost
  */
 
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { leads, outreachMessages } from "@/lib/db/schema";
 import { eq, sql, and, lt } from "drizzle-orm";
 import type { PipelineStage, DashboardStats } from "@/types";
@@ -20,6 +20,7 @@ const STALE_THRESHOLD_DAYS = 5;
 export async function detectStaleProspects(): Promise<{
   staleLeads: Array<{ id: number; companyName: string; stage: string; daysSinceActivity: number; recommendedAction: string }>;
 }> {
+  await getDb();
   const staleDate = new Date();
   staleDate.setDate(staleDate.getDate() - STALE_THRESHOLD_DAYS);
   const staleDateStr = staleDate.toISOString().split("T")[0];
@@ -64,6 +65,7 @@ export async function detectStaleProspects(): Promise<{
 
 // ─── Pipeline Stats ──────────────────────────────────────────────────────────
 export async function getPipelineStats(): Promise<DashboardStats> {
+  await getDb();
   const today = new Date().toISOString().split("T")[0];
 
   const stageCounts = await db
@@ -126,6 +128,7 @@ export async function getPipelineStats(): Promise<DashboardStats> {
 
 // ─── Morning Briefing Generator ──────────────────────────────────────────────
 export async function generateMorningBriefing(): Promise<string> {
+  await getDb();
   const stats = await getPipelineStats();
   const { staleLeads } = await detectStaleProspects();
 
@@ -155,6 +158,7 @@ export async function generateMorningBriefing(): Promise<string> {
 
 // ─── Evening Report Generator ────────────────────────────────────────────────
 export async function generateEveningReport(): Promise<string> {
+  await getDb();
   const stats = await getPipelineStats();
 
   const lines: string[] = [

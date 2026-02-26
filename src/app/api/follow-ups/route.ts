@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { followUpSequences, leads } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
   try {
+    await getDb();
     const sequences = await db
       .select({
         id: followUpSequences.id,

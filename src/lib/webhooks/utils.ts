@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { leads, pipelineEvents, outreachMessages, followUpSequences } from "@/lib/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { createHmac, timingSafeEqual } from "crypto";

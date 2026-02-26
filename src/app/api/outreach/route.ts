@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { outreachMessages, leads } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 
 export async function GET() {
   try {
+    await getDb();
     const messages = await db
       .select({
         id: outreachMessages.id,

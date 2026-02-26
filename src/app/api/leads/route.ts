@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getDb } from "@/lib/db";
 import { leads } from "@/lib/db/schema";
 import { and, desc, eq, like, sql, type SQL } from "drizzle-orm";
 
@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get("offset") || "0");
 
   try {
+    await getDb();
     // Build conditions
     const conditions: SQL[] = [];
     if (vertical) conditions.push(eq(leads.vertical, vertical));
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await getDb();
     const body = await request.json();
 
     const result = await db.insert(leads).values({

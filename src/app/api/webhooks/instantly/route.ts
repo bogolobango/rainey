@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDb } from "@/lib/db";
 import {
   verifyHmacSignature,
   findLeadByEmail,
@@ -48,6 +49,7 @@ interface InstantlyPayload {
 }
 
 export async function POST(request: NextRequest) {
+  await getDb();
   const rawBody = await request.text();
 
   // ── Signature verification ──

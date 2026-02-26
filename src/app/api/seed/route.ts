@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/db";
 import { seedDatabase } from "@/lib/db/seed";
 
 export async function GET() {
   try {
+    await getDb();
     const result = await seedDatabase();
 
     if (result.leadsInserted === 0) {

@@ -1,32 +1,47 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { drizzle } from "drizzle-orm/sql-js";
+import initSqlJs, { type Database as SqlJsDatabase } from "sql.js";
 import * as schema from "./schema";
-import path from "path";
 import fs from "fs";
+import path from "path";
 
-let _db: ReturnType<typeof drizzle> | null = null;
-let _sqlite: InstanceType<typeof Database> | null = null;
+type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
 
-function getDatabase() {
-  if (_db) return _db;
+let _db: DrizzleDB | null = null;
+let _sqlDb: SqlJsDatabase | null = null;
+let _initPromise: Promise<DrizzleDB> | null = null;
 
-  const dataDir = path.join(process.cwd(), "data");
+// Use /tmp on Vercel/v0 (serverless — read-only fs except /tmp), ./data locally
+function getDbPath(): string {
+  const isVercel = !!process.env.VERCEL;
+  const dataDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
+  return path.join(dataDir, "bdr.db");
+}
 
-  const dbPath = path.join(dataDir, "bdr.db");
-  _sqlite = new Database(dbPath);
+async function initDatabase(): Promise<DrizzleDB> {
+  if (_db) return _db;
 
-  // Enable WAL mode for better concurrent reads
-  _sqlite.pragma("journal_mode = WAL");
-  _sqlite.pragma("busy_timeout = 5000");
-  _sqlite.pragma("foreign_keys = ON");
+  const SQL = await initSqlJs();
+  const dbPath = getDbPath();
 
-  _db = drizzle(_sqlite, { schema });
+  // Load existing DB file if present, otherwise create fresh
+  if (fs.existsSync(dbPath)) {
+    try {
+      const buffer = fs.readFileSync(dbPath);
+      _sqlDb = new SQL.Database(buffer);
+    } catch {
+      _sqlDb = new SQL.Database();
+    }
+  } else {
+    _sqlDb = new SQL.Database();
+  }
+
+  _db = drizzle(_sqlDb, { schema });
 
   // Initialize tables
-  _sqlite.exec(`
+  _sqlDb.run(`
     CREATE TABLE IF NOT EXISTS leads (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       company_name TEXT NOT NULL,
@@ -156,13 +171,29 @@ function getDatabase() {
     CREATE INDEX IF NOT EXISTS idx_follow_up_lead_id ON follow_up_sequences(lead_id);
   `);
 
-  // Auto-seed if empty
-  const count = _sqlite.prepare("SELECT count(*) as c FROM leads").get() as { c: number };
-  if (count.c === 0) {
+  // Check if needs seeding
+  const result = _sqlDb.exec("SELECT count(*) as c FROM leads");
+  const count = (result[0]?.values[0]?.[0] as number) ?? 0;
+  if (count === 0) {
     _needsSeed = true;
   }
 
+  // Persist to disk
+  saveToFile();
+
   return _db;
+}
+
+/** Persist the in-memory sql.js database to disk. */
+export function saveToFile(): void {
+  if (!_sqlDb) return;
+  try {
+    const data = _sqlDb.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(getDbPath(), buffer);
+  } catch {
+    // Ignore write errors (e.g. read-only filesystem on first deploy)
+  }
 }
 
 let _needsSeed = false;
@@ -178,10 +209,30 @@ export function checkAndClearSeedFlag(): boolean {
   return false;
 }
 
-// Export a proxy that lazily initializes
-export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+/**
+ * Get the initialized drizzle DB instance.
+ * Must be awaited on first call (async init for sql.js WASM).
+ */
+export async function getDb(): Promise<DrizzleDB> {
+  if (_db) return _db;
+  if (!_initPromise) {
+    _initPromise = initDatabase();
+  }
+  return _initPromise;
+}
+
+/**
+ * Backward-compatible synchronous export.
+ * The proxy routes all property access through the initialized _db singleton.
+ * API routes MUST call `await getDb()` once before using this.
+ */
+export const db = new Proxy({} as DrizzleDB, {
   get(_target, prop) {
-    const database = getDatabase();
-    return (database as unknown as Record<string | symbol, unknown>)[prop];
+    if (!_db) {
+      throw new Error(
+        "Database not initialized. Call `await getDb()` first in your API route handler.",
+      );
+    }
+    return (_db as unknown as Record<string | symbol, unknown>)[prop];
   },
 });

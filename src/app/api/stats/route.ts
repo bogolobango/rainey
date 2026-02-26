@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db, checkAndClearSeedFlag } from "@/lib/db";
+import { db, getDb, checkAndClearSeedFlag } from "@/lib/db";
 import { leads, outreachMessages } from "@/lib/db/schema";
 import { eq, sql, and, lt } from "drizzle-orm";
 import { seedDatabase } from "@/lib/db/seed";
@@ -7,6 +7,7 @@ import type { PipelineStage } from "@/types";
 
 export async function GET() {
   try {
+    await getDb();
     // Auto-seed on first load if DB is empty
     if (checkAndClearSeedFlag()) {
       await seedDatabase();
