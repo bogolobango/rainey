@@ -4,11 +4,14 @@ import { agentRuns, leads, outreachMessages, followUpSequences, callPreps, propo
 import { eq, desc, sql } from "drizzle-orm";
 import type { AgentType, Lead, Channel } from "@/types";
 import { generateOutreachBatch } from "@/lib/agents/outreach-composer";
-import { generateMorningBriefing } from "@/lib/agents/pipeline-intelligence";
+import { generateMorningBriefing, generateEveningReport } from "@/lib/agents/pipeline-intelligence";
 import { generateCallPrep } from "@/lib/agents/prospect-research";
 import { generateProposal } from "@/lib/agents/proposal-generator";
 import { buildDailyFollowUpQueue } from "@/lib/agents/follow-up-sequencing";
 import { formatCurrency, calculateROI } from "@/lib/utils";
+import { runLeadScout } from "@/lib/agents/lead-scout";
+import { launchOutreachCampaign } from "@/lib/integrations/instantly";
+import { sendNotification } from "@/lib/notifications";
 
 /** Hydrate a DB row into a typed Lead by parsing JSON fields. */
 function hydrateLead(row: Record<string, unknown>): Lead {
@@ -74,8 +77,13 @@ export async function POST(request: NextRequest) {
     try {
       switch (agentType) {
         case "lead_scout": {
-          // Lead Scout requires OpenAI API key; if not available, just mark completed
-          summary = "Lead Scout requires OPENAI_API_KEY to discover new leads. Configure it in your environment to enable GPT-powered lead discovery.";
+          if (!process.env.OPENAI_API_KEY) {
+            summary = "Lead Scout requires OPENAI_API_KEY. Configure it in your environment to enable GPT-powered lead discovery.";
+            break;
+          }
+          const scoutResult = await runLeadScout();
+          itemsProcessed = scoutResult.leadsDiscovered;
+          summary = scoutResult.summary;
           break;
         }
 
@@ -102,12 +110,60 @@ export async function POST(request: NextRequest) {
               templateId: msg.templateId,
               subject: msg.subject,
               body: msg.body,
-              personalizationNotes: msg.personalizationNotes,
+              personalizationNotes: msg.personalizationNotes
+                + (msg.subjectVariant ? ` | Subject variant: ${msg.subjectVariant}` : ""),
               roiCalculation: msg.roiCalculation,
               status: "draft",
               sequenceDay: 0,
+              scheduledAt: msg.scheduledAt || null,
             });
             itemsProcessed++;
+          }
+
+          // Also push any approved email drafts to Instantly
+          const approvedEmails = await db
+            .select({
+              msgId: outreachMessages.id,
+              leadId: outreachMessages.leadId,
+              email: leads.email,
+              firstName: leads.firstName,
+              lastName: leads.lastName,
+              companyName: leads.companyName,
+              subject: outreachMessages.subject,
+              body: outreachMessages.body,
+            })
+            .from(outreachMessages)
+            .innerJoin(leads, eq(outreachMessages.leadId, leads.id))
+            .where(eq(outreachMessages.status, "approved"))
+            .limit(50);
+
+          if (approvedEmails.length > 0 && process.env.INSTANTLY_API_KEY) {
+            const today = new Date().toISOString().split("T")[0];
+            const { campaignId, leadsAdded } = await launchOutreachCampaign({
+              campaignName: `Rainey BDR — ${today}`,
+              leads: approvedEmails
+                .filter((e) => e.email)
+                .map((e) => ({
+                  email: e.email!,
+                  firstName: e.firstName || "",
+                  lastName: e.lastName || "",
+                  companyName: e.companyName,
+                  customVariables: {
+                    subject: e.subject || "",
+                    body: e.body,
+                    rainey_lead_id: String(e.leadId),
+                  },
+                })),
+            });
+
+            if (campaignId && leadsAdded > 0) {
+              for (const e of approvedEmails) {
+                await db.update(outreachMessages)
+                  .set({ status: "sent", sentAt: sql`datetime('now')` })
+                  .where(eq(outreachMessages.id, e.msgId));
+              }
+              summary += ` | Launched Instantly campaign: ${leadsAdded} leads pushed.`;
+            }
           }
 
           summary = batch.summary;
@@ -115,8 +171,21 @@ export async function POST(request: NextRequest) {
         }
 
         case "pipeline_intelligence": {
-          const briefing = await generateMorningBriefing();
-          summary = briefing;
+          // Determine morning vs evening based on current hour (ET)
+          const etHour = new Date().toLocaleString("en-US", {
+            timeZone: "America/New_York", hour: "numeric", hour12: false,
+          });
+          const isEvening = parseInt(etHour, 10) >= 16;
+
+          if (isEvening) {
+            const report = await generateEveningReport();
+            summary = report;
+            await sendNotification({ title: "Evening Report", body: report }).catch(() => {});
+          } else {
+            const briefing = await generateMorningBriefing();
+            summary = briefing;
+            await sendNotification({ title: "Morning Briefing", body: briefing }).catch(() => {});
+          }
           itemsProcessed = 1;
           break;
         }

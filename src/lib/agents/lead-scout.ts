@@ -16,6 +16,7 @@ import { db, getDb } from "@/lib/db";
 import { leads, agentRuns } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { chatJSON } from "@/lib/integrations/openai";
+import { enrichLead as apolloEnrich } from "@/lib/integrations/apollo";
 import type { Vertical, Tier } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -24,7 +25,9 @@ const TARGET_COUNT = 50;
 
 const CATEGORIES: { label: string; vertical: Vertical; count: number }[] = [
   { label: "indoor sports facility", vertical: "indoor_sports", count: TARGET_COUNT },
-  { label: "med spa", vertical: "med_spa", count: TARGET_COUNT },
+  { label: "med spa or longevity clinic", vertical: "med_spa", count: TARGET_COUNT },
+  { label: "dental practice", vertical: "dental", count: TARGET_COUNT },
+  { label: "youth sports academy", vertical: "youth_sports", count: TARGET_COUNT },
 ];
 
 // ─── Scoring Weights ─────────────────────────────────────────────────────────
@@ -177,6 +180,34 @@ Return ONLY a JSON object. No explanation, no markdown.`;
   return lead;
 }
 
+// ─── Pain Signal Extraction ─────────────────────────────────────────────────
+
+const PAIN_KEYWORDS: { pattern: RegExp; signal: string }[] = [
+  { pattern: /slow\s+(response|reply|follow[-\s]?up)/i, signal: "Slow inquiry response times" },
+  { pattern: /manual\s+(booking|scheduling|process)/i, signal: "Manual booking processes" },
+  { pattern: /after[-\s]?hours/i, signal: "No after-hours coverage" },
+  { pattern: /missed\s+(call|lead|inquir)/i, signal: "Missed inbound leads" },
+  { pattern: /no[-\s]?show/i, signal: "High no-show rates" },
+  { pattern: /staff(ing)?\s+(shortage|turnover|overwhelm)/i, signal: "Staffing challenges" },
+  { pattern: /grow(ing|th)|expand/i, signal: "Rapid growth straining operations" },
+  { pattern: /multiple\s+(location|site|branch)/i, signal: "Multi-location coordination challenges" },
+  { pattern: /compet(itor|ition|itive)/i, signal: "Increasing competitive pressure" },
+  { pattern: /review|rating|reputation/i, signal: "Online reputation management needs" },
+  { pattern: /automat/i, signal: "Seeking automation solutions" },
+  { pattern: /legacy|outdated|old\s+system/i, signal: "Outdated technology stack" },
+];
+
+function extractPainSignals(research: string | null): string[] {
+  if (!research) return [];
+  const signals: string[] = [];
+  for (const { pattern, signal } of PAIN_KEYWORDS) {
+    if (pattern.test(research) && !signals.includes(signal)) {
+      signals.push(signal);
+    }
+  }
+  return signals;
+}
+
 // ─── Normalise GPT lead → internal shape ────────────────────────────────────
 
 function normalise(raw: GPTDiscoveredLead, vertical: Vertical): DiscoveredLead {
@@ -202,9 +233,46 @@ function normalise(raw: GPTDiscoveredLead, vertical: Vertical): DiscoveredLead {
     phone: raw.phone_number || null,
     linkedinCompany: raw.linkedin_company || null,
     linkedinPersonal: raw.linkedin_personal || null,
-    painSignals: [],
+    painSignals: extractPainSignals(raw.research),
     research: raw.research || null,
   };
+}
+
+// ─── Apollo.io Enrichment Layer ─────────────────────────────────────────────
+
+async function apolloEnrichLead(lead: DiscoveredLead): Promise<DiscoveredLead> {
+  if (!lead.website) return lead;
+
+  try {
+    const result = await apolloEnrich(lead.companyName, lead.website);
+    if (!result) return lead;
+
+    // Overlay Apollo data onto the lead (only fill gaps, don't overwrite)
+    if (result.contact) {
+      if (!lead.email && result.contact.email) lead.email = result.contact.email;
+      if (!lead.firstName && result.contact.firstName) lead.firstName = result.contact.firstName;
+      if (!lead.lastName && result.contact.lastName) lead.lastName = result.contact.lastName;
+      if (!lead.title && result.contact.title) lead.title = result.contact.title;
+      if (!lead.phone && result.contact.phone) lead.phone = result.contact.phone;
+      if (!lead.linkedinPersonal && result.contact.linkedinUrl) lead.linkedinPersonal = result.contact.linkedinUrl;
+    }
+
+    if (result.organization) {
+      if (!lead.annualRevenue && result.organization.annualRevenue) {
+        lead.annualRevenue = `$${Math.round(result.organization.annualRevenue / 1000000)}M`;
+      }
+      if (!lead.employeeCount && result.organization.employeeCount) {
+        lead.employeeCount = String(result.organization.employeeCount);
+      }
+      if (!lead.linkedinCompany && result.organization.linkedinUrl) {
+        lead.linkedinCompany = result.organization.linkedinUrl;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Lead Scout] Apollo enrichment warning for ${lead.companyName}:`, err);
+  }
+
+  return lead;
 }
 
 // ─── Deduplication (against DB) ─────────────────────────────────────────────
@@ -384,6 +452,13 @@ export async function runLeadScout(): Promise<{
 
       // Step 3: Normalise
       const normalised = enriched.map((raw) => normalise(raw, cat.vertical));
+
+      // Step 3.5: Apollo.io enrichment for verified emails + org data
+      for (let i = 0; i < normalised.length; i++) {
+        normalised[i] = await apolloEnrichLead(normalised[i]);
+        // Rate limit Apollo calls
+        if (i < normalised.length - 1) await new Promise((r) => setTimeout(r, 200));
+      }
 
       // Step 4: Deduplicate
       const { newLeads, duplicatesSkipped } = deduplicateLeads(normalised, existingNames);

@@ -4,6 +4,7 @@ import { leads, outreachMessages } from "@/lib/db/schema";
 import { eq, sql, and, lt } from "drizzle-orm";
 import { seedDatabase } from "@/lib/db/seed";
 import type { PipelineStage } from "@/types";
+import { getWeeklyPacing } from "@/lib/agents/pipeline-intelligence";
 
 export async function GET() {
   try {
@@ -48,6 +49,9 @@ export async function GET() {
     const activeStages: PipelineStage[] = ["contacted", "responded", "discovery_booked", "demo_completed", "proposal_sent", "negotiating"];
     const activeProspects = activeStages.reduce((sum, s) => sum + (pipelineByStage[s] || 0), 0);
 
+    // Weekly pacing toward 3 discovery calls/week target
+    const weeklyPacing = await getWeeklyPacing();
+
     return NextResponse.json({
       totalLeads: totalLeads[0].count,
       newLeadsToday: newToday[0].count,
@@ -63,6 +67,7 @@ export async function GET() {
         : 0,
       avgLeadScore: Math.round(avgScore[0].avg * 10) / 10,
       staleProspects: staleCount[0].count,
+      weeklyPacing,
     });
   } catch (error) {
     console.error("Failed to fetch stats:", error);

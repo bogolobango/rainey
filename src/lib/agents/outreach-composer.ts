@@ -6,6 +6,11 @@
  *
  * Templates: A (Tier 1 Sports), B (LinkedIn), C (Med Spa/Dental),
  *            D (Day 3 Follow-Up), E (Day 7 Case Study), F (Day 14 Breakup)
+ *
+ * Upgrades:
+ *  - A/B subject line testing (variant rotation per lead)
+ *  - Send-time optimization (Tue-Thu 8-10 AM local preferred)
+ *  - Batch-level analytics metadata for tracking winning variants
  */
 
 import type { Lead, Channel, Vertical } from "@/types";
@@ -21,6 +26,101 @@ interface GeneratedMessage {
   templateId: TemplateId;
   personalizationNotes: string;
   roiCalculation: string;
+  subjectVariant?: "A" | "B";
+  scheduledAt?: string;
+}
+
+// ─── A/B Subject Line Variants ──────────────────────────────────────────────
+
+interface SubjectVariants {
+  A: (lead: Lead) => string;
+  B: (lead: Lead) => string;
+}
+
+const SUBJECT_VARIANTS: Record<string, SubjectVariants> = {
+  templateA: {
+    A: (lead) => `How ${lead.companyName} can capture the 80% of leads you're currently losing`,
+    B: (lead) => `${lead.companyName}: ${formatCurrency(estimateLostRevenue(lead.locationCount, lead.vertical))}/yr in lost revenue — here's the fix`,
+  },
+  templateC: {
+    A: (lead) => `The ${formatCurrency(Math.round(estimateLostRevenue(lead.locationCount, lead.vertical) / 12))} your ${lead.companyName} locations lose every month from missed calls`,
+    B: (lead) => `${lead.firstName}, your ${lead.locationCount} locations are leaking revenue after hours`,
+  },
+  templateD: {
+    A: (lead) => `Re: How ${lead.companyName} can capture lost leads`,
+    B: (lead) => `Quick question about ${lead.companyName}'s inquiry process`,
+  },
+  templateE: {
+    A: () => `How Arena Sports recovered $500K+ in Year 1`,
+    B: (lead) => `Case study: ${lead.locationCount}-location operation → 10X ROI in 12 months`,
+  },
+  templateF: {
+    A: (lead) => `Closing the loop on ${lead.companyName}`,
+    B: (lead) => `${lead.firstName} — one last thing before I go`,
+  },
+};
+
+/**
+ * Pick A or B variant based on lead ID (deterministic split for tracking).
+ * Even IDs get variant A, odd get variant B.
+ */
+function pickVariant(leadId: number): "A" | "B" {
+  return leadId % 2 === 0 ? "A" : "B";
+}
+
+function getSubjectWithVariant(
+  templateKey: string,
+  lead: Lead,
+  fallbackSubject: string,
+): { subject: string; variant: "A" | "B" } {
+  const variants = SUBJECT_VARIANTS[templateKey];
+  if (!variants) return { subject: fallbackSubject, variant: "A" };
+
+  const variant = pickVariant(lead.id);
+  return {
+    subject: variants[variant](lead),
+    variant,
+  };
+}
+
+// ─── Send-Time Optimization ─────────────────────────────────────────────────
+
+/**
+ * Calculate optimal send time for a lead.
+ * Priority windows (in ET):
+ *   Tue-Thu 8:00-10:00 AM → highest open rates for B2B cold email
+ *   Mon/Fri 9:00-11:00 AM → acceptable fallback
+ *
+ * Returns ISO timestamp for the next optimal send window.
+ */
+export function calculateOptimalSendTime(): string {
+  const now = new Date();
+  const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+
+  const dayOfWeek = et.getDay(); // 0=Sun, 1=Mon ... 6=Sat
+
+  // Find next weekday
+  let daysToAdd = 0;
+  if (dayOfWeek === 0) daysToAdd = 1; // Sun → Mon
+  else if (dayOfWeek === 6) daysToAdd = 2; // Sat → Mon
+
+  const sendDate = new Date(et);
+  sendDate.setDate(sendDate.getDate() + daysToAdd);
+
+  // Tue-Thu → send at 8:30 AM ET, Mon/Fri → send at 9:30 AM ET
+  const sendDay = sendDate.getDay();
+  if (sendDay >= 2 && sendDay <= 4) {
+    sendDate.setHours(8, 30, 0, 0);
+  } else {
+    sendDate.setHours(9, 30, 0, 0);
+  }
+
+  // If the calculated time is in the past (agent ran after 9:30 AM), send now
+  if (sendDate.getTime() < et.getTime()) {
+    return now.toISOString();
+  }
+
+  return sendDate.toISOString();
 }
 
 // ─── Template Selection Logic ────────────────────────────────────────────────
@@ -61,9 +161,11 @@ function generateTemplateA(lead: Lead): GeneratedMessage {
   const painOpener = lead.painSignals?.[0]
     ? `I noticed ${lead.painSignals[0].toLowerCase()} — `
     : "";
+  const { subject, variant } = getSubjectWithVariant("templateA", lead,
+    `How ${lead.companyName} can capture the 80% of leads you're currently losing`);
 
   return {
-    subject: `How ${lead.companyName} can capture the 80% of leads you're currently losing`,
+    subject,
     body: `Hi ${lead.firstName},
 
 ${painOpener}I work with multi-location indoor sports facilities to solve a problem that's costing the industry millions: slow inquiry response times.
@@ -79,6 +181,8 @@ Would you be open to a 15-minute call next week to see if this could work for ${
     templateId: "A",
     personalizationNotes: `${lead.locationCount} locations, ${lead.bookingPlatform || "unknown"} platform, ${lead.painSignals?.length || 0} pain signals detected`,
     roiCalculation: buildROILine(lead.locationCount),
+    subjectVariant: variant,
+    scheduledAt: calculateOptimalSendTime(),
   };
 }
 
@@ -103,9 +207,11 @@ function generateTemplateC(lead: Lead): GeneratedMessage {
   const monthlyLost = Math.round(estimateLostRevenue(lead.locationCount, lead.vertical) / 12);
   const procedureRange = lead.vertical === "med_spa" ? "$500–$5,000" : "$200–$2,000";
   const procedureType = lead.vertical === "med_spa" ? "procedures" : "appointments";
+  const { subject, variant } = getSubjectWithVariant("templateC", lead,
+    `The ${formatCurrency(monthlyLost)} your ${lead.companyName} locations lose every month from missed calls`);
 
   return {
-    subject: `The ${formatCurrency(monthlyLost)} your ${lead.companyName} locations lose every month from missed calls`,
+    subject,
     body: `Hi ${lead.firstName},
 
 Individual ${procedureType} at practices like yours cost ${procedureRange}. When a potential patient calls and nobody picks up — or they have to wait 24+ hours for a callback — that revenue walks to a competitor.
@@ -121,12 +227,17 @@ Worth a 15-minute call to see if the numbers work for ${lead.companyName}?`,
     templateId: "C",
     personalizationNotes: `Med spa/dental template — ${lead.locationCount} locations, est. ${formatCurrency(monthlyLost)}/mo lost`,
     roiCalculation: buildROILine(lead.locationCount),
+    subjectVariant: variant,
+    scheduledAt: calculateOptimalSendTime(),
   };
 }
 
 function generateTemplateD(lead: Lead): GeneratedMessage {
+  const { subject, variant } = getSubjectWithVariant("templateD", lead,
+    `Re: How ${lead.companyName} can capture lost leads`);
+
   return {
-    subject: `Re: How ${lead.companyName} can capture lost leads`,
+    subject,
     body: `Hi ${lead.firstName},
 
 Quick follow-up — the core question: Is ${lead.companyName} currently losing revenue because you can't respond to inquiries instantly, 24/7?
@@ -138,12 +249,17 @@ Happy to send over a one-pager or jump on a quick call — whatever works best.`
     templateId: "D",
     personalizationNotes: "Day 3 follow-up — value-add approach",
     roiCalculation: buildROILine(lead.locationCount),
+    subjectVariant: variant,
+    scheduledAt: calculateOptimalSendTime(),
   };
 }
 
 function generateTemplateE(lead: Lead): GeneratedMessage {
+  const { subject, variant } = getSubjectWithVariant("templateE", lead,
+    `How Arena Sports recovered $500K+ in Year 1`);
+
   return {
-    subject: `How Arena Sports recovered $500K+ in Year 1`,
+    subject,
     body: `Hi ${lead.firstName},
 
 I know you're busy, so I'll lead with results: Arena Sports (5 locations, Seattle) implemented our AI booking automation and saw:
@@ -158,14 +274,18 @@ I put together a quick breakdown of what this could look like for your ${lead.lo
     templateId: "E",
     personalizationNotes: "Day 7 follow-up — Arena Sports case study drop",
     roiCalculation: buildROILine(lead.locationCount),
+    subjectVariant: variant,
+    scheduledAt: calculateOptimalSendTime(),
   };
 }
 
 function generateTemplateF(lead: Lead): GeneratedMessage {
   const annualLost = estimateLostRevenue(lead.locationCount, lead.vertical);
+  const { subject, variant } = getSubjectWithVariant("templateF", lead,
+    `Closing the loop on ${lead.companyName}`);
 
   return {
-    subject: `Closing the loop on ${lead.companyName}`,
+    subject,
     body: `Hi ${lead.firstName},
 
 I've reached out a couple of times about helping ${lead.companyName} automate inquiry handling and recover lost revenue. I understand the timing might not be right.
@@ -177,6 +297,8 @@ In the meantime, I'm happy to send over our industry report on the cost of slow 
     templateId: "F",
     personalizationNotes: "Day 14 breakup email — soft close with value offer",
     roiCalculation: buildROILine(lead.locationCount),
+    subjectVariant: variant,
+    scheduledAt: calculateOptimalSendTime(),
   };
 }
 
@@ -197,14 +319,20 @@ export function generateMessage(lead: Lead, templateId: TemplateId): GeneratedMe
 export function generateOutreachBatch(leads: Lead[]): {
   messages: (GeneratedMessage & { leadId: number })[];
   summary: string;
+  variantSplit: { A: number; B: number };
 } {
   const messages: (GeneratedMessage & { leadId: number })[] = [];
+  let variantA = 0;
+  let variantB = 0;
 
   for (const lead of leads) {
     // Generate email
     const { templateId } = selectTemplate(lead, 0);
     const emailMsg = generateMessage(lead, templateId);
     messages.push({ ...emailMsg, leadId: lead.id });
+
+    if (emailMsg.subjectVariant === "A") variantA++;
+    else if (emailMsg.subjectVariant === "B") variantB++;
 
     // Also generate LinkedIn connection request
     const linkedinMsg = generateMessage(lead, "B");
@@ -213,6 +341,7 @@ export function generateOutreachBatch(leads: Lead[]): {
 
   return {
     messages,
-    summary: `Generated ${messages.length} messages for ${leads.length} leads (${messages.filter(m => m.channel === "email").length} emails, ${messages.filter(m => m.channel === "linkedin").length} LinkedIn)`,
+    summary: `Generated ${messages.length} messages for ${leads.length} leads (${messages.filter(m => m.channel === "email").length} emails, ${messages.filter(m => m.channel === "linkedin").length} LinkedIn) | A/B split: ${variantA}A/${variantB}B`,
+    variantSplit: { A: variantA, B: variantB },
   };
 }
