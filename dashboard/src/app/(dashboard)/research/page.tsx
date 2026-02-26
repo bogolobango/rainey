@@ -12,7 +12,6 @@ import {
   DollarSign,
   MessageCircleQuestion,
   Shield,
-  TrendingUp,
   Download,
   RefreshCw,
 } from "lucide-react";

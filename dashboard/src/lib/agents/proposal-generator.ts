@@ -5,9 +5,9 @@
  * Purpose: Generate custom proposal within 30 minutes of completed demo.
  */
 
-import type { Lead, Proposal } from "@/types";
+import type { Lead } from "@/types";
 import { formatCurrency, calculateROI } from "@/lib/utils";
-import { generateCallPrep, type CallPrepBriefing } from "./prospect-research";
+import { generateCallPrep } from "./prospect-research";
 
 interface ProposalInput {
   lead: Lead;
@@ -31,7 +31,7 @@ interface GeneratedProposal {
 
 // ─── Proposal Generator ──────────────────────────────────────────────────────
 export function generateProposal(input: ProposalInput): GeneratedProposal {
-  const { lead, callNotes, painPointsMentioned, objectionsRaised, decisionTimeline } = input;
+  const { lead, callNotes, painPointsMentioned, decisionTimeline } = input;
   const roi = calculateROI(lead.locationCount);
   const callPrep = generateCallPrep(lead);
   const fm = callPrep.financialModel;

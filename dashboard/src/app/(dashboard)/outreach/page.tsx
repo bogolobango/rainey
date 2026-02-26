@@ -13,7 +13,6 @@ import {
   Mail,
   Linkedin,
   Clock,
-  ChevronDown,
 } from "lucide-react";
 
 interface QueueItem {

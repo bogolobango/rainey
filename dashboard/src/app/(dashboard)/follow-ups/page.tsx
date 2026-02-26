@@ -10,10 +10,8 @@ import {
   Mail,
   Linkedin,
   Clock,
-  Check,
   AlertTriangle,
   Pause,
-  Play,
   ArrowRight,
 } from "lucide-react";
 

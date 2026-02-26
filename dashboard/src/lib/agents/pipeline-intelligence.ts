@@ -10,7 +10,7 @@
  */
 
 import { db } from "@/lib/db";
-import { leads, pipelineEvents, outreachMessages, agentRuns } from "@/lib/db/schema";
+import { leads, outreachMessages } from "@/lib/db/schema";
 import { eq, sql, and, lt } from "drizzle-orm";
 import type { PipelineStage, DashboardStats } from "@/types";
 

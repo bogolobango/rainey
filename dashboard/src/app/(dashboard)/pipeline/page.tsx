@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   GitBranch,
-  ChevronRight,
   Clock,
   MessageSquare,
   Calendar,
@@ -37,7 +36,7 @@ const prospects: PipelineProspect[] = [
   { id: 7, company: "Hudson Sports", contact: "Jake Williams", stage: "contacted", lastActivity: "No response", lastActivityDate: "7 days ago", daysInStage: 7, nextAction: "Channel switch to LinkedIn", isStale: true },
 ];
 
-const stageIcons: Partial<Record<PipelineStage, typeof Clock>> = {
+const stageIcons: Partial<Record<PipelineStage, React.ComponentType<{ className?: string }>>> = {
   cold: Clock,
   contacted: MessageSquare,
   responded: MessageSquare,
@@ -107,7 +106,8 @@ export default function PipelinePage() {
                 <Card className={`border-t-4 ${stageColumnColors[stage] || "border-t-muted"}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm font-sans font-semibold">
+                      <CardTitle className="text-sm font-sans font-semibold flex items-center gap-1.5">
+                        {stageIcons[stage] && (() => { const Icon = stageIcons[stage]!; return <Icon className="h-3.5 w-3.5 text-muted-foreground" />; })()}
                         {PIPELINE_STAGE_LABELS[stage]}
                       </CardTitle>
                       <Badge variant="secondary" className="font-sans text-xs">

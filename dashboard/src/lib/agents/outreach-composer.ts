@@ -8,7 +8,7 @@
  *            D (Day 3 Follow-Up), E (Day 7 Case Study), F (Day 14 Breakup)
  */
 
-import type { Lead, Channel, Vertical, Tier } from "@/types";
+import type { Lead, Channel, Vertical } from "@/types";
 import { formatCurrency, calculateROI } from "@/lib/utils";
 
 // ─── Template IDs ────────────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ export function generateOutreachBatch(leads: Lead[]): {
 
   for (const lead of leads) {
     // Generate email
-    const { templateId, channel } = selectTemplate(lead, 0);
+    const { templateId } = selectTemplate(lead, 0);
     const emailMsg = generateMessage(lead, templateId);
     messages.push({ ...emailMsg, leadId: lead.id });
 
