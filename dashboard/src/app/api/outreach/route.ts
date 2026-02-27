@@ -1,10 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isApolloConfigured, searchSequences, searchOutreachEmails } from "@/lib/integrations/apollo";
+import { mapEmailToOutreach } from "@/lib/apollo-mapper";
 import { db, getDb } from "@/lib/db";
 import { outreachMessages, leads } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 
 export async function GET() {
   try {
+    // ── Apollo path (live data) ──────────────────────────────────────────
+    if (isApolloConfigured()) {
+      const sequences = await searchSequences({ activeOnly: true });
+      const sequenceIds = sequences.map(s => s.id);
+
+      if (sequenceIds.length === 0) {
+        return NextResponse.json({ messages: [], draftCount: 0, approvedCount: 0, sequences: [] });
+      }
+
+      const { emails } = await searchOutreachEmails(sequenceIds, { perPage: 50 });
+
+      const messages = emails.map((e, i) => {
+        const mapped = mapEmailToOutreach(e, i);
+        return {
+          id: mapped.id,
+          leadId: mapped.leadId,
+          channel: mapped.channel,
+          templateId: mapped.templateId,
+          subject: mapped.subject,
+          body: mapped.body,
+          personalizationNotes: mapped.personalizationNotes,
+          roiCalculation: mapped.roiCalculation,
+          status: mapped.status,
+          sequenceDay: mapped.sequenceDay,
+          scheduledAt: mapped.scheduledAt,
+          sentAt: mapped.sentAt,
+          createdAt: mapped.createdAt,
+          companyName: e.contact?.organization_name ?? e.contact?.name ?? null,
+          contactFirst: e.contact?.first_name ?? null,
+          contactLast: e.contact?.last_name ?? null,
+          score: null,
+        };
+      });
+
+      return NextResponse.json({
+        messages,
+        draftCount: 0,
+        approvedCount: messages.length,
+        sequences: sequences.map(s => ({ id: s.id, name: s.name })),
+      });
+    }
+
+    // ── SQLite fallback ──────────────────────────────────────────────────
     await getDb();
     const messages = await db
       .select({
@@ -43,11 +88,7 @@ export async function GET() {
 
 /**
  * PATCH /api/outreach — Approve, reject, or edit outreach messages.
- *
- * Body:
- *   { action: "approve" | "reject", messageIds: number[] }
- *   { action: "approve_all" }
- *   { action: "edit", messageId: number, subject?: string, body?: string }
+ * Only works with SQLite backend (Apollo messages are read-only).
  */
 export async function PATCH(request: NextRequest) {
   try {
@@ -68,7 +109,6 @@ export async function PATCH(request: NextRequest) {
       }
 
       case "approve_all": {
-        // Count drafts first, then bulk approve
         const drafts = await db.select({ id: outreachMessages.id })
           .from(outreachMessages)
           .where(eq(outreachMessages.status, "draft"));
@@ -85,7 +125,6 @@ export async function PATCH(request: NextRequest) {
         if (!messageIds?.length) {
           return NextResponse.json({ error: "messageIds required" }, { status: 400 });
         }
-        // Delete rejected messages
         for (const id of messageIds) {
           await db.delete(outreachMessages).where(eq(outreachMessages.id, id));
         }

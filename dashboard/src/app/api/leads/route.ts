@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isApolloConfigured, searchSequences, getAllSequenceContacts } from "@/lib/integrations/apollo";
+import { mapContactToLead } from "@/lib/apollo-mapper";
 import { db, getDb } from "@/lib/db";
 import { leads } from "@/lib/db/schema";
 import { and, desc, eq, like, sql, type SQL } from "drizzle-orm";
@@ -12,8 +14,36 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get("offset") || "0");
 
   try {
+    // ── Apollo path (live data) ──────────────────────────────────────────
+    if (isApolloConfigured()) {
+      const sequences = await searchSequences({ activeOnly: true });
+      const sequenceIds = sequences.map(s => s.id);
+      const contacts = sequenceIds.length > 0
+        ? await getAllSequenceContacts(sequenceIds)
+        : [];
+
+      let mapped = contacts.map((c, i) => mapContactToLead(c, i));
+
+      // Apply filters
+      if (stage) mapped = mapped.filter(l => l.pipelineStage === stage);
+      if (search) {
+        const q = search.toLowerCase();
+        mapped = mapped.filter(l =>
+          l.companyName.toLowerCase().includes(q)
+          || (l.firstName ?? "").toLowerCase().includes(q)
+          || (l.lastName ?? "").toLowerCase().includes(q)
+          || (l.email ?? "").toLowerCase().includes(q),
+        );
+      }
+
+      const total = mapped.length;
+      const paged = mapped.slice(offset, offset + limit);
+
+      return NextResponse.json({ leads: paged, total, limit, offset });
+    }
+
+    // ── SQLite fallback ──────────────────────────────────────────────────
     await getDb();
-    // Build conditions
     const conditions: SQL[] = [];
     if (vertical) conditions.push(eq(leads.vertical, vertical));
     if (stage) conditions.push(eq(leads.pipelineStage, stage));
