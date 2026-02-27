@@ -38,7 +38,7 @@ node_modules/
 !.yarn/versions
 
 # Next.js
-/.next/
+.next/
 /out/
 /build/
 
@@ -56,5 +56,3 @@ next-env.d.ts
 # Testing
 /coverage
 
-# Legacy dashboard directory (moved to root)
-/dashboard/
