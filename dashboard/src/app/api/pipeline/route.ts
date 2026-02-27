@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isApolloConfigured, searchSequences, getAllSequenceContacts, searchOutreachEmails } from "@/lib/integrations/apollo";
+import { aggregatePipelineStages, buildActivityFromEmails } from "@/lib/apollo-mapper";
 import { db, getDb } from "@/lib/db";
 import { leads, pipelineEvents } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -6,6 +8,27 @@ import { eq, sql } from "drizzle-orm";
 // GET /api/pipeline — Returns pipeline stats and stage counts
 export async function GET() {
   try {
+    // ── Apollo path ──────────────────────────────────────────────────────
+    if (isApolloConfigured()) {
+      const sequences = await searchSequences({ activeOnly: true });
+      const sequenceIds = sequences.map(s => s.id);
+
+      const [contacts, emailResult] = await Promise.all([
+        sequenceIds.length > 0 ? getAllSequenceContacts(sequenceIds) : Promise.resolve([]),
+        sequenceIds.length > 0 ? searchOutreachEmails(sequenceIds, { perPage: 50 }) : Promise.resolve({ emails: [], totalEntries: 0 }),
+      ]);
+
+      const stageCounts = aggregatePipelineStages(contacts);
+      const recentEvents = buildActivityFromEmails(emailResult.emails);
+
+      return NextResponse.json({
+        stageCounts,
+        totalLeads: contacts.length,
+        recentEvents,
+      });
+    }
+
+    // ── SQLite fallback ──────────────────────────────────────────────────
     await getDb();
     const stageCounts = await db
       .select({
@@ -36,14 +59,13 @@ export async function GET() {
   }
 }
 
-// POST /api/pipeline — Move a prospect to a new stage
+// POST /api/pipeline — Move a prospect to a new stage (SQLite only)
 export async function POST(request: NextRequest) {
   try {
     await getDb();
     const body = await request.json();
     const { leadId, toStage, trigger, notes } = body;
 
-    // Get current stage
     const current = await db
       .select({ stage: leads.pipelineStage })
       .from(leads)
@@ -56,13 +78,11 @@ export async function POST(request: NextRequest) {
 
     const fromStage = current[0].stage;
 
-    // Update lead stage
     await db
       .update(leads)
       .set({ pipelineStage: toStage, updatedAt: sql`datetime('now')` })
       .where(eq(leads.id, leadId));
 
-    // Create pipeline event
     const event = await db.insert(pipelineEvents).values({
       leadId,
       fromStage,

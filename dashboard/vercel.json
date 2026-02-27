@@ -1,28 +1,6 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron?agent=lead_scout",
-      "schedule": "30 11 * * 1-5"
-    },
-    {
-      "path": "/api/cron?agent=outreach_composer",
-      "schedule": "0 12 * * 1-5"
-    },
-    {
-      "path": "/api/cron?agent=pipeline_intelligence",
-      "schedule": "30 12 * * 1-5"
-    },
-    {
-      "path": "/api/cron?agent=follow_up_sequencing",
-      "schedule": "0 15 * * 1-5"
-    },
-    {
-      "path": "/api/cron?agent=prospect_research",
-      "schedule": "0 20 * * 1-5"
-    },
-    {
-      "path": "/api/cron?agent=pipeline_intelligence",
-      "schedule": "0 22 * * 1-5"
-    }
-  ]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build"
 }
