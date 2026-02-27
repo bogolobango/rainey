@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { AgentStatusCard } from "@/components/dashboard/agent-status-card";
 import { PipelineFunnel } from "@/components/dashboard/pipeline-funnel";
@@ -128,6 +128,37 @@ export default function DashboardPage() {
   const { data: outreach, refetch: refetchOutreach } = useApi<OutreachData>("/api/outreach");
   const { data: analytics } = useApi<AnalyticsData>("/api/analytics?view=actions,templates");
   const [approving, setApproving] = useState<Record<number, boolean>>({});
+  const [runningAgents, setRunningAgents] = useState(false);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+
+  // ── Agent execution handlers ──
+  const handleRunAllAgents = useCallback(async () => {
+    setRunningAgents(true);
+    try {
+      for (const agentType of AGENT_TYPES) {
+        await fetch("/api/agents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentType }),
+        });
+      }
+    } finally {
+      setRunningAgents(false);
+    }
+  }, []);
+
+  const handleMorningBriefing = useCallback(async () => {
+    setBriefingLoading(true);
+    try {
+      await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentType: "pipeline_intelligence" }),
+      });
+    } finally {
+      setBriefingLoading(false);
+    }
+  }, []);
 
   const s = stats ?? {
     totalLeads: 0, newLeadsToday: 0, activeProspects: 0,
@@ -184,13 +215,13 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="font-sans">
-            <Clock className="h-4 w-4 mr-1" />
+          <Button variant="outline" size="sm" className="font-sans" onClick={handleMorningBriefing} disabled={briefingLoading}>
+            {briefingLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Clock className="h-4 w-4 mr-1" />}
             Morning Briefing
           </Button>
-          <Button size="sm" className="font-sans rounded-full">
-            <Play className="h-4 w-4 mr-1" />
-            Run All Agents
+          <Button size="sm" className="font-sans rounded-full" onClick={handleRunAllAgents} disabled={runningAgents}>
+            {runningAgents ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Play className="h-4 w-4 mr-1" />}
+            {runningAgents ? "Running..." : "Run All Agents"}
           </Button>
         </div>
       </div>
@@ -234,9 +265,11 @@ export default function DashboardPage() {
                   {s.staleProspects} prospect{s.staleProspects !== 1 ? "s" : ""} need attention — no activity for 5+ days
                 </p>
               </div>
-              <Button variant="outline" size="sm" className="font-sans text-xs">
-                View all
-              </Button>
+              <a href="/pipeline">
+                <Button variant="outline" size="sm" className="font-sans text-xs">
+                  View all
+                </Button>
+              </a>
             </div>
           </CardContent>
         </Card>

@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ToastContainer } from "@/components/ui/toast-container";
+import { useToast } from "@/hooks/use-toast";
 import {
   FileSearch,
   Calendar,
@@ -46,9 +49,102 @@ function parseJsonSafe<T>(val: string, fallback: T): T {
 }
 
 export default function ResearchPage() {
-  const { data, loading } = useApi<ResearchData>("/api/research");
+  const { data, loading, refetch } = useApi<ResearchData>("/api/research");
+  const { toasts, addToast, dismiss } = useToast();
   const callPreps = data?.callPreps ?? [];
-  const featured = callPreps[0] ?? null;
+
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [selectedBrief, setSelectedBrief] = useState<CallPrepRow | null>(null);
+
+  async function handleGenerateBrief() {
+    setGenerateLoading(true);
+    addToast("Running Prospect Research agent...", "info");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentType: "prospect_research" }),
+      });
+      const result = await res.json();
+      if (res.ok) {
+        addToast(result.run?.summary || "Research briefs generated", "success");
+        refetch();
+      } else {
+        addToast(result.error || "Failed to generate briefs", "error");
+      }
+    } catch {
+      addToast("Failed to generate briefs", "error");
+    } finally {
+      setGenerateLoading(false);
+    }
+  }
+
+  function handleExportPDF(cp: CallPrepRow) {
+    const contactName = [cp.contactFirst, cp.contactLast].filter(Boolean).join(" ") || "Unknown";
+    const painSignals: string[] = parseJsonSafe(cp.painSignals, []);
+    const killerQuestions: string[] = parseJsonSafe(cp.killerQuestions, []);
+    const objectionHandles: Record<string, string> = parseJsonSafe(cp.objectionHandles, {});
+    const financialModel: Record<string, string> = parseJsonSafe(cp.financialModel, {});
+
+    const lines = [
+      `DISCOVERY CALL PREP: ${cp.companyName}`,
+      `Contact: ${contactName}`,
+      `Call Date: ${new Date(cp.callDate).toLocaleDateString()}`,
+      "",
+      "COMPANY SNAPSHOT",
+      "\u2500".repeat(40),
+      cp.companySnapshot,
+      "",
+    ];
+
+    if (painSignals.length > 0) {
+      lines.push("PAIN SIGNALS", "\u2500".repeat(40));
+      painSignals.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+      lines.push("");
+    }
+
+    if (Object.keys(financialModel).length > 0) {
+      lines.push("FINANCIAL MODEL", "\u2500".repeat(40));
+      Object.entries(financialModel).forEach(([k, v]) => lines.push(`${k}: ${v}`));
+      lines.push("");
+    }
+
+    if (killerQuestions.length > 0) {
+      lines.push("KILLER OPENING QUESTIONS", "\u2500".repeat(40));
+      killerQuestions.forEach((q, i) => lines.push(`${i + 1}. ${q}`));
+      lines.push("");
+    }
+
+    if (Object.keys(objectionHandles).length > 0) {
+      lines.push("OBJECTION PRE-HANDLES", "\u2500".repeat(40));
+      Object.entries(objectionHandles).forEach(([obj, handle]) => {
+        lines.push(`"${obj}"`);
+        lines.push(`  \u2192 ${handle}`);
+      });
+      lines.push("");
+    }
+
+    if (cp.recommendedCaseStudy) {
+      lines.push("RECOMMENDED CASE STUDY", "\u2500".repeat(40), cp.recommendedCaseStudy, "");
+    }
+
+    if (cp.competitiveIntel) {
+      lines.push("COMPETITIVE INTEL", "\u2500".repeat(40), cp.competitiveIntel, "");
+    }
+
+    const content = lines.join("\n");
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `call-prep-${(cp.companyName ?? "unknown").toLowerCase().replace(/\s+/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast(`Call prep exported for ${cp.companyName}`, "success");
+  }
+
+  // The featured brief is the selected one, or if nothing selected the first one
+  const featured = selectedBrief ?? callPreps[0] ?? null;
 
   return (
     <div className="p-6 space-y-6">
@@ -57,12 +153,12 @@ export default function ResearchPage() {
         <div>
           <h1 className="text-3xl font-display text-foreground">Prospect Research</h1>
           <p className="text-sm text-muted-foreground font-sans mt-1">
-            {loading ? "Loading research briefs..." : "Deep research briefs and call prep docs for upcoming discovery calls"}
+            {loading ? "Loading research briefs..." : `${callPreps.length} research briefs \u2014 deep call prep docs for discovery calls`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" className="font-sans rounded-full">
-            <RefreshCw className="h-4 w-4 mr-1" />
+          <Button size="sm" className="font-sans rounded-full" onClick={handleGenerateBrief} disabled={generateLoading}>
+            {generateLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
             Generate New Brief
           </Button>
         </div>
@@ -98,13 +194,13 @@ export default function ResearchPage() {
                       <div>
                         <p className="text-sm font-semibold font-sans text-foreground">{cp.companyName}</p>
                         <p className="text-xs text-muted-foreground font-sans">
-                          {contactName} — {new Date(cp.callDate).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                          {contactName} \u2014 {new Date(cp.callDate).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="success" className="font-sans text-xs">Prep Ready</Badge>
-                      <Button variant="outline" size="sm" className="font-sans text-xs">
+                      <Button variant="outline" size="sm" className="font-sans text-xs" onClick={() => setSelectedBrief(cp)}>
                         View Brief
                       </Button>
                     </div>
@@ -116,7 +212,7 @@ export default function ResearchPage() {
         </CardContent>
       </Card>
 
-      {/* Featured Call Prep (first one) */}
+      {/* Featured Call Prep */}
       {featured && (() => {
         const contactName = [featured.contactFirst, featured.contactLast].filter(Boolean).join(" ") || "Unknown";
         const painSignals: string[] = parseJsonSafe(featured.painSignals, []);
@@ -135,11 +231,11 @@ export default function ResearchPage() {
                       Discovery Call Prep: {featured.companyName}
                     </CardTitle>
                     <p className="text-xs text-muted-foreground font-sans mt-0.5">
-                      {new Date(featured.callDate).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} — {contactName}
+                      {new Date(featured.callDate).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} \u2014 {contactName}
                     </p>
                   </div>
                 </div>
-                <Button variant="outline" size="sm" className="font-sans text-xs">
+                <Button variant="outline" size="sm" className="font-sans text-xs" onClick={() => handleExportPDF(featured)}>
                   <Download className="h-3 w-3 mr-1" />
                   Export PDF
                 </Button>
@@ -233,6 +329,8 @@ export default function ResearchPage() {
           </Card>
         );
       })()}
+
+      <ToastContainer toasts={toasts} dismiss={dismiss} />
     </div>
   );
 }

@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ToastContainer } from "@/components/ui/toast-container";
+import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw,
   Mail,
@@ -48,8 +51,10 @@ const touchpointSchedule = [
 ];
 
 export default function FollowUpsPage() {
-  const { data, loading } = useApi<FollowUpsData>("/api/follow-ups");
+  const { data, loading, refetch } = useApi<FollowUpsData>("/api/follow-ups");
+  const { toasts, addToast, dismiss } = useToast();
   const sequences = data?.sequences ?? [];
+  const [queueLoading, setQueueLoading] = useState(false);
 
   const activeCount = sequences.filter(s => s.status === "active").length;
   const dueToday = sequences.filter(s => {
@@ -58,6 +63,29 @@ export default function FollowUpsPage() {
     const today = new Date().toDateString();
     return touchDate === today;
   }).length;
+
+  async function handleQueueFollowUps() {
+    setQueueLoading(true);
+    addToast("Building follow-up queue...", "info");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentType: "follow_up_sequencing" }),
+      });
+      const result = await res.json();
+      if (res.ok) {
+        addToast(result.run?.summary || "Follow-up queue built", "success");
+        refetch();
+      } else {
+        addToast(result.error || "Failed to build follow-up queue", "error");
+      }
+    } catch {
+      addToast("Failed to queue follow-ups", "error");
+    } finally {
+      setQueueLoading(false);
+    }
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -69,8 +97,8 @@ export default function FollowUpsPage() {
             {loading ? "Loading sequences..." : `${activeCount} active sequences, ${dueToday} touches due today`}
           </p>
         </div>
-        <Button size="sm" className="font-sans rounded-full">
-          <RefreshCw className="h-4 w-4 mr-1" />
+        <Button size="sm" className="font-sans rounded-full" onClick={handleQueueFollowUps} disabled={queueLoading}>
+          {queueLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
           Queue Today&apos;s Follow-Ups
         </Button>
       </div>
@@ -204,6 +232,8 @@ export default function FollowUpsPage() {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      <ToastContainer toasts={toasts} dismiss={dismiss} />
     </div>
   );
 }

@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ToastContainer } from "@/components/ui/toast-container";
+import { useToast } from "@/hooks/use-toast";
 import {
   GitBranch,
   Clock,
@@ -62,6 +65,8 @@ const stageColumnColors: Partial<Record<PipelineStage, string>> = {
 export default function PipelinePage() {
   const { data: leadsData, loading: leadsLoading } = useApi<LeadsData>("/api/leads?limit=200");
   const { data: pipelineData, loading: pipelineLoading } = useApi<PipelineData>("/api/pipeline");
+  const { toasts, addToast, dismiss } = useToast();
+  const [briefingLoading, setBriefingLoading] = useState(false);
 
   const allLeads = leadsData?.leads ?? [];
   const events = pipelineData?.recentEvents ?? [];
@@ -88,6 +93,28 @@ export default function PipelinePage() {
     ["cold", "contacted", "responded", "discovery_booked", "demo_completed", "proposal_sent"].includes(stage)
   );
 
+  async function handleMorningBriefing() {
+    setBriefingLoading(true);
+    addToast("Generating pipeline briefing...", "info");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentType: "pipeline_intelligence" }),
+      });
+      const result = await res.json();
+      if (res.ok) {
+        addToast(result.run?.summary || "Briefing generated", "success");
+      } else {
+        addToast(result.error || "Failed to generate briefing", "error");
+      }
+    } catch {
+      addToast("Failed to generate briefing", "error");
+    } finally {
+      setBriefingLoading(false);
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -105,7 +132,8 @@ export default function PipelinePage() {
               {staleCount} stale
             </Badge>
           )}
-          <Button variant="outline" size="sm" className="font-sans">
+          <Button variant="outline" size="sm" className="font-sans" onClick={handleMorningBriefing} disabled={briefingLoading}>
+            {briefingLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
             Morning Briefing
           </Button>
         </div>
@@ -219,6 +247,8 @@ export default function PipelinePage() {
           )}
         </CardContent>
       </Card>
+
+      <ToastContainer toasts={toasts} dismiss={dismiss} />
     </div>
   );
 }
